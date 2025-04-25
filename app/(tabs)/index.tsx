@@ -1,11 +1,11 @@
 import { StyleSheet } from 'react-native';
 import { ThemedView } from '@/components/ThemedView';
-import ECGMonitor from '@/components/ECGMonitor';
+import SimpleDashboard from '@/components/SimpleDashboard';
 
 export default function HomeScreen() {
   return (
     <ThemedView style={styles.container}>
-      <ECGMonitor />
+      <SimpleDashboard />
     </ThemedView>
   );
 }
@@ -13,6 +13,6 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
+    padding: 0,
   },
 });

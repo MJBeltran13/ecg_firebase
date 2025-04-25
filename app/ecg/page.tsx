@@ -1,10 +1,10 @@
 import React from 'react';
-import ECGMonitor from '../../components/ECGMonitor';
+import SimpleDashboard from '../../components/SimpleDashboard';
 
 const ECGPage = () => {
   return (
     <div className="container mx-auto p-4">
-      <ECGMonitor />
+      <SimpleDashboard />
     </div>
   );
 };

@@ -1,109 +1,236 @@
-import { StyleSheet, Image, Platform } from 'react-native';
-
-import { Collapsible } from '@/components/Collapsible';
-import { ExternalLink } from '@/components/ExternalLink';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
+import { StyleSheet, View, Image, Platform, ScrollView } from 'react-native';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 
-export default function TabTwoScreen() {
+export default function HowToUseScreen() {
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Explore</ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image source={require('@/assets/images/react-logo.png')} style={{ alignSelf: 'center' }} />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Custom fonts">
-        <ThemedText>
-          Open <ThemedText type="defaultSemiBold">app/_layout.tsx</ThemedText> to see how to load{' '}
-          <ThemedText style={{ fontFamily: 'SpaceMono' }}>
-            custom fonts such as this one.
-          </ThemedText>
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/versions/latest/sdk/font">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user's current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful <ThemedText type="defaultSemiBold">react-native-reanimated</ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+    <ScrollView contentContainerStyle={styles.container}>
+     
+        <ThemedText style={styles.mainTitle} type="title">How to Use</ThemedText>
+    
+      
+      <View style={styles.cardsContainer}>
+        <ThemedView style={styles.card}>
+          <View style={styles.cardHeader}>
+            <IconSymbol name="cable.connector" size={20} color="#4F86F7" style={styles.cardIcon} />
+            <ThemedText style={styles.cardTitle}>Hardware Setup</ThemedText>
+          </View>
+          <View style={styles.cardContent}>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>1</ThemedText>
+              <ThemedText style={styles.bulletText}>Connect AD8232 to Yakap Device:</ThemedText>
+            </View>
+           
+          </View>
+        </ThemedView>
+
+        <ThemedView style={styles.card}>
+          <View style={styles.cardHeader}>
+            <IconSymbol name="heart.circle" size={20} color="#F87171" style={styles.cardIcon} />
+            <ThemedText style={styles.cardTitle}>Electrode Placement</ThemedText>
+          </View>
+          <View style={styles.cardContent}>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>1</ThemedText>
+              <ThemedText style={styles.bulletText}>Red electrode: Right side next to the navel</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>2</ThemedText>
+              <ThemedText style={styles.bulletText}>Yellow electrode: Left side next to the navel</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>3</ThemedText>
+              <ThemedText style={styles.bulletText}>Green electrode: Bottom part below the navel</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>!</ThemedText>
+              <ThemedText style={styles.bulletText}>Clean the skin with alcohol and ensure electrodes make good contact</ThemedText>
+            </View>
+          </View>
+        </ThemedView>
+
+        <ThemedView style={styles.card}>
+          <View style={styles.cardHeader}>
+            <IconSymbol name="power" size={20} color="#34D399" style={styles.cardIcon} />
+            <ThemedText style={styles.cardTitle}>Power On</ThemedText>
+          </View>
+          <View style={styles.cardContent}>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>1</ThemedText>
+              <ThemedText style={styles.bulletText}>Power on Device using USB or battery</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>2</ThemedText>
+              <ThemedText style={styles.bulletText}>Wait for Green LED to start blinking (Device ready)</ThemedText>
+            </View>
+          </View>
+        </ThemedView>
+
+        <ThemedView style={styles.card}>
+          <View style={styles.cardHeader}>
+            <IconSymbol name="waveform.path.ecg" size={20} color="#A78BFA" style={styles.cardIcon} />
+            <ThemedText style={styles.cardTitle}>Monitor Display</ThemedText>
+          </View>
+          <View style={styles.cardContent}>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>Top: Real-time heart rate (BPM)</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>Middle: Live ECG waveform</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>Bottom: Signal quality indicator</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>!</ThemedText>
+              <ThemedText style={styles.bulletText}>Red indicators show if leads are disconnected</ThemedText>
+            </View>
+          </View>
+        </ThemedView>
+
+        <ThemedView style={styles.card}>
+          <View style={styles.cardHeader}>
+            <IconSymbol name="exclamationmark.triangle" size={20} color="#F97316" style={styles.cardIcon} />
+            <ThemedText style={styles.cardTitle}>Troubleshooting</ThemedText>
+          </View>
+          <View style={styles.cardContent}>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>No signal: Check electrode connections</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>Noisy signal: Stay still, check electrode contact</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>Device not found: Reset Device, check power</ThemedText>
+            </View>
+          
+          </View>
+        </ThemedView>
+
+        <ThemedView style={styles.card}>
+          <View style={styles.cardHeader}>
+            <IconSymbol name="dot.radiowaves.left.and.right" size={20} color="#60A5FA" style={styles.cardIcon} />
+            <ThemedText style={styles.cardTitle}>Connection Status</ThemedText>
+          </View>
+          <View style={styles.cardContent}>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>Green LED Solid: Device connected and working properly</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>Green LED Blinking: Device ready to connect</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>Red LED: Connection lost or electrodes disconnected</ThemedText>
+            </View>
+            <View style={styles.bulletItem}>
+              <ThemedText style={styles.bulletPoint}>•</ThemedText>
+              <ThemedText style={styles.bulletText}>No LED: Device is off or needs charging</ThemedText>
+            </View>
+          </View>
+        </ThemedView>
+      </View>
+      
+    
+        <ThemedText style={styles.footerText}>ECG App v1.0</ThemedText>
+     
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  container: {
+    padding: 20,
   },
   titleContainer: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    marginBottom: 24,
+    paddingTop: 12,
+  },
+  mainTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    padding: 16,
+   
+   
+    
+  },
+  cardsContainer: {
+    gap: 20,
+  },
+  card: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  cardIcon: {
+    marginRight: 12,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  cardContent: {
+    padding: 20,
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  bulletItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 4,
+  },
+  bulletPoint: {
+    marginRight: 12,
+    color: '#4F86F7',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  bulletText: {
+    flex: 1,
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#334155',
+  },
+  footer: {
+    marginTop: 40,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  footerText: {
+    marginTop: 16,
+    fontSize: 13,
+    color: '#64748B',
   },
 });

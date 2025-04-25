@@ -2,45 +2,83 @@
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
+# ECG Firebase Integration
+
+This project integrates an ECG monitoring device with Firebase Realtime Database. It includes both an Arduino-based ESP32 ECG device and a React Native Expo app that displays the data.
+
 ## Get started
 
-1. Install dependencies
+1. Configure Firebase
+   
+   Update the Firebase configuration in `constants/Firebase.ts` with your project credentials from the Firebase console.
+
+2. Install dependencies
 
    ```bash
    npm install
    ```
 
-2. Start the app
+3. Start the app
 
    ```bash
-    npx expo start
+   npx expo start
    ```
 
-In the output, you'll find options to open the app in a
+## Arduino Setup
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+The Arduino code in `arduino/ecg.ino` sends ECG data to Firebase. To set it up:
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+1. Update the Wi-Fi credentials:
+   ```c
+   const char *ssid = "YOUR_WIFI_SSID";
+   const char *password = "YOUR_WIFI_PASSWORD";
+   ```
 
-## Get a fresh project
+2. Upload the code to your ESP32 device with the AD8232 ECG sensor connected.
 
-When you're ready, run:
+3. The device will send readings to Firebase when it detects valid heartbeats.
 
-```bash
-npm run reset-project
+## Testing with Postman
+
+You can test the Firebase integration using Postman without the physical device:
+
+1. See the guide in `docs/firebase-postman-guide.md` for detailed instructions.
+
+2. Use Postman to send sample ECG readings to your Firebase database.
+
+## Firebase Database Structure
+
+The database stores a single ECG reading with this structure:
+
+```json
+{
+  "deviceId": "esp32",
+  "bpm": 75,
+  "timestamp": "2023-06-01T12:30:45",
+  "rawEcg": 512,
+  "smoothedEcg": 30
+}
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+The data is stored at `ecg_readings` in the Firebase Realtime Database:
+```
+ecg_readings/
+  ├── deviceId: "esp32"
+  ├── bpm: 75
+  ├── timestamp: "2023-06-01T12:30:45"
+  ├── rawEcg: 512
+  └── smoothedEcg: 30
+```
+
+This approach stores only the most recent reading, which is suitable for real-time monitoring.
 
 ## Learn more
 
-To learn more about developing your project with Expo, look at the following resources:
+To learn more about developing with Expo and Firebase:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- [Expo documentation](https://docs.expo.dev/)
+- [Firebase documentation](https://firebase.google.com/docs)
+- [Firebase Realtime Database REST API](https://firebase.google.com/docs/database/rest/start)
 
 ## Join the community
 
