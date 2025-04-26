@@ -8,6 +8,7 @@ const char *password = "Password";
 
 // --- Firebase Configuration ---
 const char *firebaseUrl = "https://ecgdata-f042a-default-rtdb.asia-southeast1.firebasedatabase.app/ecg_readings.json";
+const char *firebaseAuth = "AIzaSyA0OGrnWnNx0LDPGzDZHdrzajiRGEjr3AM";
 // NTP Server for time synchronization
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 0; // adjust based on your timezone
@@ -221,7 +222,9 @@ void loop()
                 if (WiFi.status() == WL_CONNECTED)
                 {
                     HTTPClient http;
-                    http.begin(firebaseUrl);
+                    // Add auth parameter to the URL
+                    String fullUrl = String(firebaseUrl) + "?auth=" + String(firebaseAuth);
+                    http.begin(fullUrl);
                     http.addHeader("Content-Type", "application/json");
 
                     // Generate timestamp for data
@@ -231,7 +234,7 @@ void loop()
                     String payload = "{\"deviceId\": \"esp32\", \"bpm\": " + String(averageBPM) + 
                                     ", \"timestamp\": \"" + timestamp + 
                                     "\", \"rawEcg\": " + String(ecgValue) + 
-                                    ", \"smoothedEcg\": " + String(smoothedEcg) + "}";
+                                    "\", \"smoothedEcg\": " + String(smoothedEcg) + "}";
                                     
                     int httpResponseCode = http.PUT(payload);
                     if (httpResponseCode > 0)
