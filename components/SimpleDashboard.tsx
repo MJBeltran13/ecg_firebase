@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Dimensions, ScrollView, SafeAreaView, StatusBar, Platform, Image } from 'react-native';
 import { subscribeToLatestEcgData, EcgReading } from '../constants/EcgData';
 import { FontAwesome } from '@expo/vector-icons';
-import YakapLogo from '../assets/images/yakap_logo.svg';
 
 const SimpleDashboard: React.FC = () => {
   const [latestReading, setLatestReading] = useState<EcgReading | null>(null);
@@ -295,8 +294,12 @@ const SimpleDashboard: React.FC = () => {
       <StatusBar barStyle="dark-content" backgroundColor="#f5f7fa" />
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         <View style={styles.header}>
-          <YakapLogo width={80} height={80} style={styles.logo} />
-          <Text style={styles.dashboardTitle}>Dashboard</Text>
+          <Image 
+            source={require('../assets/images/logo2.jpg')} 
+            style={[styles.logo, { width: 80, height: 80 }]} 
+            resizeMode="contain"
+          />
+          <Text style={styles.dashboardTitle}>Yakap App</Text>
         </View>
         
         {/* BPM and Device Status Cards */}
@@ -413,11 +416,11 @@ const styles = StyleSheet.create({
   dashboardTitle: {
     fontSize: 26,
     fontWeight: '700',
-    color: '#1a237e',
+    color: '#4D8FCF',
     letterSpacing: 0.8,
     textShadowColor: 'rgba(0, 0, 0, 0.1)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    textShadowRadius: 1,
   },
   cardsRow: {
     flexDirection: 'row',

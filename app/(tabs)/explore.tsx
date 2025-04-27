@@ -126,22 +126,18 @@ export default function HowToUseScreen() {
             </View>
             <View style={styles.bulletItem}>
               <ThemedText style={styles.bulletPoint}>•</ThemedText>
-              <ThemedText style={styles.bulletText}>Green LED Blinking: Device ready to connect</ThemedText>
+              <ThemedText style={styles.bulletText}>Red LED Blinking: Device Battery Low</ThemedText>
             </View>
             <View style={styles.bulletItem}>
               <ThemedText style={styles.bulletPoint}>•</ThemedText>
-              <ThemedText style={styles.bulletText}>Red LED: Connection lost or electrodes disconnected</ThemedText>
-            </View>
-            <View style={styles.bulletItem}>
-              <ThemedText style={styles.bulletPoint}>•</ThemedText>
-              <ThemedText style={styles.bulletText}>No LED: Device is off or needs charging</ThemedText>
+              <ThemedText style={styles.bulletText}>Yellow LED Blinking: Connection lost or Not Connected</ThemedText>
             </View>
           </View>
         </ThemedView>
       </View>
       
     
-        <ThemedText style={styles.footerText}>ECG App v1.0</ThemedText>
+        <ThemedText style={styles.footerText}>Yakap App v2.0</ThemedText>
      
     </ScrollView>
   );
