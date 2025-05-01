@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Dimensions, ScrollView, SafeAreaView, StatusBar, Platform, Image } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, Dimensions, ScrollView, SafeAreaView, StatusBar, Platform, Image, TouchableOpacity } from 'react-native';
 import { subscribeToLatestEcgData, EcgReading } from '../constants/EcgData';
 import { FontAwesome } from '@expo/vector-icons';
+
+const CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection status
 
 const SimpleDashboard: React.FC = () => {
   const [latestReading, setLatestReading] = useState<EcgReading | null>(null);
@@ -10,85 +12,131 @@ const SimpleDashboard: React.FC = () => {
   const [timeLabels, setTimeLabels] = useState<string[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now());
+  const [connectionAttempts, setConnectionAttempts] = useState(0);
 
   // Time formatting function
   const formatTime = (date: Date): string => {
     return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`;
   };
 
+  // Enhanced connection status check
+  const checkConnectionStatus = useCallback(() => {
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUpdateTime;
+    
+    if (timeSinceLastUpdate > CONNECTION_TIMEOUT) {
+      setIsConnected(false);
+      // Increment connection attempts when disconnected
+      setConnectionAttempts(prev => prev + 1);
+    }
+  }, [lastUpdateTime]);
+
   // Monitor data updates and connection status
   useEffect(() => {
     let connectionCheckInterval: NodeJS.Timeout;
 
-    const checkConnection = () => {
-      const now = Date.now();
-      const timeSinceLastUpdate = now - lastUpdateTime;
-      if (timeSinceLastUpdate > 5000) { //  seconds threshold
+    // Start checking connection status
+    connectionCheckInterval = setInterval(checkConnectionStatus, 1000);
+
+    // Cleanup interval on unmount
+    return () => {
+      clearInterval(connectionCheckInterval);
+    };
+  }, [checkConnectionStatus]);
+
+  // Reset connection attempts periodically
+  useEffect(() => {
+    const resetAttemptsInterval = setInterval(() => {
+      setConnectionAttempts(0);
+    }, 60000); // Reset every minute
+
+    return () => {
+      clearInterval(resetAttemptsInterval);
+    };
+  }, []);
+
+  // Subscribe to ECG data with enhanced error handling
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    
+    const setupSubscription = async () => {
+      try {
+        unsubscribe = subscribeToLatestEcgData((data) => {
+          if (data) {
+            setLatestReading(data);
+            setLastUpdateTime(Date.now());
+            setIsConnected(true);
+            setConnectionAttempts(0); // Reset attempts on successful connection
+            
+            // Add timestamp for x-axis
+            const currentTime = new Date();
+            const timeString = formatTime(currentTime);
+            
+            // Update histories atomically
+            setBpmHistory(prev => {
+              const newHistory = [...prev, data.bpm];
+              return newHistory.slice(-10);
+            });
+            
+            setEcgHistory(prev => {
+              const newHistory = [...prev, data.smoothedEcg || 0];
+              return newHistory.slice(-10);
+            });
+            
+            setTimeLabels(prev => {
+              const newLabels = [...prev, timeString];
+              return newLabels.slice(-10);
+            });
+          }
+        });
+      } catch (error) {
+        console.error('Error setting up ECG subscription:', error);
         setIsConnected(false);
       }
     };
 
-    // Start checking connection status
-    connectionCheckInterval = setInterval(checkConnection, 1000); // Check every second
+    setupSubscription();
 
+    // Cleanup subscription
     return () => {
-      clearInterval(connectionCheckInterval);
+      if (unsubscribe) {
+        unsubscribe();
+      }
     };
-  }, [lastUpdateTime]);
-
-  // Subscribe to ECG data
-  useEffect(() => {
-    const unsubscribe = subscribeToLatestEcgData((data) => {
-      if (data) {
-        setLatestReading(data);
-        setLastUpdateTime(Date.now());
-        setIsConnected(true);
-        
-        // Add timestamp for x-axis
-        const currentTime = new Date();
-        const timeString = formatTime(currentTime);
-        
-        // Update BPM history
-        setBpmHistory(prev => {
-          const newHistory = [...prev, data.bpm];
-          return newHistory.slice(-10); // Keep last 10 readings
-        });
-        
-        // Update ECG history
-        setEcgHistory(prev => {
-          const newHistory = [...prev, data.smoothedEcg || 0];
-          return newHistory.slice(-10); // Keep last 10 readings
-        });
-        
-        // Update time labels
-        setTimeLabels(prev => {
-          const newLabels = [...prev, timeString];
-          return newLabels.slice(-10); // Keep last 10 labels
-        });
-      }
-    });
-
-    // If no data, create sample data for demo purposes
-    if (bpmHistory.length === 0) {
-      const demoData = [];
-      const demoLabels = [];
-      const demoEcg = [];
-      
-      const now = new Date();
-      for (let i = 0; i < 10; i++) {
-        const time = new Date(now.getTime() - (9 - i) * 1000);
-        demoLabels.push(formatTime(time));
-        demoData.push(Math.floor(Math.random() * 20) + 70); // Random BPM between 70-90
-        demoEcg.push(Math.random() * 50 + 50); // Random ECG values
-      }
-      
-      setBpmHistory(demoData);
-      setTimeLabels(demoLabels);
-      setEcgHistory(demoEcg);
-    }
-
-    return () => unsubscribe();
   }, []);
+
+  // Handle clearing data with connection reset
+  const handleClearData = useCallback(() => {
+    setBpmHistory([]);
+    setEcgHistory([]);
+    setTimeLabels([]);
+    setLatestReading(null);
+    setIsConnected(false);
+    setConnectionAttempts(0);
+    setLastUpdateTime(Date.now()); // Reset the last update time
+  }, []);
+
+  // Get connection status text
+  const getConnectionStatus = useCallback(() => {
+    if (isConnected) {
+      return 'Connected';
+    }
+    if (connectionAttempts > 3) {
+      return 'No Signal';
+    }
+    return 'Waiting';
+  }, [isConnected, connectionAttempts]);
+
+  // Get connection status color
+  const getStatusColor = useCallback(() => {
+    if (isConnected) {
+      return styles.statusConnected;
+    }
+    if (connectionAttempts > 3) {
+      return styles.statusNoSignal;
+    }
+    return styles.statusDisconnected;
+  }, [isConnected, connectionAttempts]);
 
   // Create a simple line chart for BPM
   const renderBPMChart = () => {
@@ -299,7 +347,16 @@ const SimpleDashboard: React.FC = () => {
             style={[styles.logo, { width: 80, height: 80 }]} 
             resizeMode="contain"
           />
-          <Text style={styles.dashboardTitle}>Yakap App</Text>
+          <View style={styles.headerContent}>
+            <Text style={styles.dashboardTitle}>Yakap App</Text>
+            <TouchableOpacity 
+              style={styles.clearButton}
+              onPress={handleClearData}
+            >
+              <FontAwesome name="trash" size={16} color="#fff" />
+              <Text style={styles.clearButtonText}>Clear Data</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         
         {/* BPM and Device Status Cards */}
@@ -316,15 +373,27 @@ const SimpleDashboard: React.FC = () => {
             <Text style={styles.sensorLabel}>Latest reading</Text>
           </View>
           
-          {/* Status Card */}
+          {/* Status Card with enhanced status display */}
           <View style={[styles.statusCard, styles.card]}>
             <View style={styles.statusContainer}>
               <View style={styles.statusIconContainer}>
-                <FontAwesome name="signal" size={24} color="#fff" style={styles.statusIcon} />
+                <FontAwesome 
+                  name={isConnected ? "signal" : connectionAttempts > 3 ? "warning" : "spinner"} 
+                  size={24} 
+                  color="#fff" 
+                  style={styles.statusIcon} 
+                />
               </View>
               <Text style={styles.statusTitle}>Status</Text>
-              <Text style={styles.statusValue}>{isConnected ? 'Connected' : 'Waiting'}</Text>
-              <View style={[styles.statusIndicator, isConnected ? styles.statusConnected : styles.statusDisconnected]} />
+              <Text style={[
+                styles.statusValue,
+                isConnected ? styles.statusTextConnected : 
+                connectionAttempts > 3 ? styles.statusTextNoSignal :
+                styles.statusTextWaiting
+              ]}>
+                {getConnectionStatus()}
+              </Text>
+              <View style={[styles.statusIndicator, getStatusColor()]} />
             </View>
           </View>
         </View>
@@ -512,6 +581,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
   },
   statusDisconnected: {
+    backgroundColor: '#FFA000',
+  },
+  statusNoSignal: {
     backgroundColor: '#F44336',
   },
   chartCard: {
@@ -655,6 +727,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#90A4AE',
     fontStyle: 'italic',
+  },
+  headerContent: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  clearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#4D8FCF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  clearButtonText: {
+    color: '#fff',
+    marginLeft: 6,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  statusTextConnected: {
+    color: '#4CAF50',
+  },
+  statusTextWaiting: {
+    color: '#FFA000',
+  },
+  statusTextNoSignal: {
+    color: '#F44336',
   },
 });
 
