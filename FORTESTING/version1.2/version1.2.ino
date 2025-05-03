@@ -19,11 +19,20 @@ const int daylightOffset_sec = 0;
 // --- Pin Definitions ---
 #define AD8232_OUTPUT 35    // Analog pin connected to AD8232 output
 #define LED_FETAL 33        // LED for fetal heartbeat
+#define POTENTIOMETER_PIN 26 // Potentiometer for calibration
 
 // --- ECG Processing Constants ---
 const int SAMPLING_RATE = 200;  // Hz - Typical ECG sampling rate
-const int BUFFER_SIZE = 32;     // Number of samples for filtering
+const int BUFFER_SIZE = 40;     // Increased from 32 for better filtering
 const float NYQUIST = SAMPLING_RATE / 2.0;
+
+// --- CALIBRATION RANGES ---
+const float MIN_PROMINENCE_VALUE = 0.005;  // Minimum prominence threshold
+const float MAX_PROMINENCE_VALUE = 0.25;   // Maximum prominence threshold
+const float MIN_DISTANCE_FACTOR = 0.15;    // Corresponds to ~400 BPM max
+const float MAX_DISTANCE_FACTOR = 0.6;     // Corresponds to ~100 BPM max
+const float MIN_FILTER_WEIGHT = 0.01;      // Minimum filter weight
+const float MAX_FILTER_WEIGHT = 0.2;       // Maximum filter weight
 
 // --- FETAL SENSITIVITY LEVELS ---
 // Define seven sensitivity levels for fetal ECG detection
@@ -53,23 +62,24 @@ const float FETAL_LEVELS[NUM_SENSITIVITY_LEVELS][3] = {
 };
 
 // Current sensitivity level (0-6, maps to levels 1-7)
-// TO ADJUST SENSITIVITY: Change this value to set the fetal detection sensitivity
-// 0 = Ultra Low, 1 = Very Low, 2 = Low, 3 = Medium, 4 = High, 5 = Very High, 6 = Ultra High
-int currentFetalSensitivity = 4; // Default to Level 5 (High Sensitivity)
+int currentFetalSensitivity = 5; // Default to Level 6 (Very High Sensitivity)
 
 // Maternal signal parameters (fixed - these don't change)
 const int MATERNAL_MIN_DISTANCE = (SAMPLING_RATE * 0.4);  // ~150 BPM max
 const float MATERNAL_PROMINENCE = 0.2;                   // Threshold
 const float MATERNAL_WEIGHT = 0.08;                     // Filter weight
 
+// Dynamic calibration parameters (adjusted by potentiometer)
+float calibratedFetalProminence;    // Will be set by potentiometer
+float calibratedFetalMinDistance;   // Will be set by potentiometer
+float calibratedFetalFilterWeight;  // Will be set by potentiometer
+bool usingCalibration = false;      // Flag to use calibrated values
+
 // Peak detection improvement
-const int PEAK_PERSISTENCE = 2;                // Reduced for faster detection
-const int SIGNAL_STABILIZATION_TIME = 3000;    // Reduced to 3 seconds
+const int PEAK_PERSISTENCE = 1;                // Reduced from 2 for faster response
+const int SIGNAL_STABILIZATION_TIME = 2000;    // Reduced to 2 seconds
 
-
-const int DEFAULT_MATERNAL_BPM = 75;  
-const int DEFAULT_FETAL_BPM = 114;   
-const int MAX_TIME_WITHOUT_DETECTION = 10000; // 10 seconds before using defaults
+const int MAX_TIME_WITHOUT_DETECTION = 15000; // Keep this for other timeout purposes
 
 // Circular buffers for filtering
 float ecgBuffer[BUFFER_SIZE];
@@ -107,19 +117,38 @@ bool usingDefaultFetalBpm = false;
 // Debug mode for troubleshooting
 const bool DEBUG_MODE = true;
 
+// Last valid detected BPM values
+int lastDetectedMaternalBpm = 0;
+int lastDetectedFetalBpm = 0;
+
+// Calibration variables
+int lastPotValue = 0;
+unsigned long lastCalibrationChange = 0;
+const int CALIBRATION_THRESHOLD = 10; // Min change in potentiometer to trigger update
+const int CALIBRATION_DEBOUNCE = 200; // Min time between calibration changes in ms
+
 void setup() {
   Serial.begin(115200);
-  Serial.println("Fetal ECG Monitor - FIXED SENSITIVITY LEVEL");
+  Serial.println("Fetal ECG Monitor - CALIBRATION MODE");
   
   // Initialize pins
   pinMode(AD8232_OUTPUT, INPUT);
   pinMode(LED_FETAL, OUTPUT);
+  pinMode(POTENTIOMETER_PIN, INPUT);
   
   // Initialize buffer with zeros
   for(int i = 0; i < BUFFER_SIZE; i++) {
     ecgBuffer[i] = 0;
   }
 
+  // Set default sensitivity to higher value for better detection
+  currentFetalSensitivity = 5; // Default to Level 6 (Very High Sensitivity)
+  
+  // Initialize calibration with default values from sensitivity level
+  calibratedFetalProminence = FETAL_LEVELS[currentFetalSensitivity][0];
+  calibratedFetalMinDistance = FETAL_LEVELS[currentFetalSensitivity][1];
+  calibratedFetalFilterWeight = FETAL_LEVELS[currentFetalSensitivity][2];
+  
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
   Serial.print("Connecting to Wi-Fi");
@@ -157,22 +186,45 @@ void setup() {
     delay(200);
   }
   
-  // Display current sensitivity level
-  displaySensitivityLevel();
+  // Read initial potentiometer value
+  lastPotValue = analogRead(POTENTIOMETER_PIN);
+  
+  // Display calibration instructions
+  displayCalibrationInstructions();
 }
 
 void loop() {
   // Read raw ECG value
   int rawEcg = analogRead(AD8232_OUTPUT);
   
+  // Check potentiometer for calibration adjustment
+  checkPotentiometerCalibration();
+  
   // Apply signal conditioning before filtering
   rawEcg = constrain(rawEcg, 100, 4000); // Remove extreme outliers
   
   // Apply simple noise reduction
   static int lastRawEcg = 0;
-  if (abs(rawEcg - lastRawEcg) > 1000) { // Extreme jump - likely noise
-    rawEcg = (rawEcg + lastRawEcg) / 2; // Smooth it
+  static int prevRawEcg = 0;
+  
+  // More aggressive spike filtering - use median of three values
+  if (abs(rawEcg - lastRawEcg) > 800) { // Increased sensitivity to spikes
+    // Use median of 3 samples to reduce spikes
+    int values[3] = {prevRawEcg, lastRawEcg, rawEcg};
+    // Simple bubble sort to find median
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < 2 - i; j++) {
+        if (values[j] > values[j + 1]) {
+          int temp = values[j];
+          values[j] = values[j + 1];
+          values[j + 1] = temp;
+        }
+      }
+    }
+    rawEcg = values[1]; // median value
   }
+  
+  prevRawEcg = lastRawEcg;
   lastRawEcg = rawEcg;
   
   // Apply bandpass filters for maternal and fetal signals
@@ -184,6 +236,31 @@ void loop() {
   static float fetalSignalStrength = 0;
   signalVariance = signalVariance * 0.95 + abs(rawEcg - 2048) * 0.05;
   fetalSignalStrength = fetalSignalStrength * 0.95 + abs(fetalFiltered) * 0.05;
+  
+  // Auto-adjust sensitivity based on signal quality if not in calibration mode
+  if (!usingCalibration) {
+    static unsigned long lastSensitivityAdjustTime = 0;
+    if (millis() - lastSensitivityAdjustTime > 10000) { // Every 10 seconds
+      lastSensitivityAdjustTime = millis();
+      
+      // If no fetal signal detected with high sensitivity, try increasing sensitivity
+      if (fetalBpm == 0 && currentFetalSensitivity < 6) {
+        currentFetalSensitivity++;
+        if (DEBUG_MODE) {
+          Serial.print("Auto-increasing sensitivity to Level ");
+          Serial.println(currentFetalSensitivity + 1);
+        }
+      }
+      // If signal is strong and stable, can reduce sensitivity slightly
+      else if (fetalSignalStrength > 100 && fetalBpm > 0 && currentFetalSensitivity > 0) {
+        currentFetalSensitivity--;
+        if (DEBUG_MODE) {
+          Serial.print("Auto-decreasing sensitivity to Level ");
+          Serial.println(currentFetalSensitivity + 1);
+        }
+      }
+    }
+  }
   
   // Force occasional resets to avoid getting stuck
   static unsigned long lastResetTime = 0;
@@ -207,25 +284,19 @@ void loop() {
   if (maternalBpm > 0) {
     lastValidMaternalBpm = millis();
     usingDefaultMaternalBpm = false;
-  } else if (millis() - lastValidMaternalBpm > MAX_TIME_WITHOUT_DETECTION && 
-             millis() - startTime > SIGNAL_STABILIZATION_TIME) {
-    if (!usingDefaultMaternalBpm) {
-      Serial.println("No maternal heartbeat detected for 10 seconds. Using default value.");
-      usingDefaultMaternalBpm = true;
-    }
-    maternalBpm = DEFAULT_MATERNAL_BPM;
+    lastDetectedMaternalBpm = maternalBpm;
+  } else {
+    maternalBpm = 0;  // Report actual zero instead of default
+    usingDefaultMaternalBpm = true;
   }
   
   if (fetalBpm > 0) {
     lastValidFetalBpm = millis();
     usingDefaultFetalBpm = false;
-  } else if (millis() - lastValidFetalBpm > MAX_TIME_WITHOUT_DETECTION && 
-             millis() - startTime > SIGNAL_STABILIZATION_TIME) {
-    if (!usingDefaultFetalBpm) {
-      Serial.println("No fetal heartbeat detected for 10 seconds. Using default value.");
-      usingDefaultFetalBpm = true;
-    }
-    fetalBpm = DEFAULT_FETAL_BPM;
+    lastDetectedFetalBpm = fetalBpm;
+  } else {
+    fetalBpm = 0;  // Report actual zero instead of default
+    usingDefaultFetalBpm = true;
   }
   
   // Visualize heartbeats using LEDs
@@ -258,8 +329,18 @@ void loop() {
       Serial.print(fetalBpm);
       Serial.print(usingDefaultFetalBpm ? " (default)" : "");
       
-      Serial.print(" | Sensitivity Level: ");
-      Serial.print(currentFetalSensitivity + 1); // Display as 1-7 instead of 0-6
+      if (usingCalibration) {
+        Serial.print(" | CALIBRATION MODE");
+        Serial.print(" | Prominence: ");
+        Serial.print(calibratedFetalProminence, 3);
+        Serial.print(" | Min Dist: ");
+        Serial.print(calibratedFetalMinDistance / SAMPLING_RATE, 2);
+        Serial.print("s | Weight: ");
+        Serial.print(calibratedFetalFilterWeight, 3);
+      } else {
+        Serial.print(" | Sensitivity Level: ");
+        Serial.print(currentFetalSensitivity + 1); // Display as 1-7 instead of 0-6
+      }
       
       if (DEBUG_MODE) {
         Serial.print(" | Raw: ");
@@ -270,6 +351,8 @@ void loop() {
         Serial.print(fetalFiltered);
         Serial.print(" | Signal Quality: ");
         Serial.print(signalVariance);
+        Serial.print(" | Pot: ");
+        Serial.print(lastPotValue);
       }
       
       Serial.println();
@@ -292,46 +375,65 @@ void loop() {
 }
 
 /**
- * Display the current fetal sensitivity level
+ * Check potentiometer value and adjust calibration if needed
  */
-void displaySensitivityLevel() {
-  Serial.println("\n--- FETAL SENSITIVITY LEVEL ---");
-  Serial.print("Current Level: ");
-  Serial.print(currentFetalSensitivity + 1); // Display as 1-7 instead of 0-6
-  Serial.print(" of 7 (");
+void checkPotentiometerCalibration() {
+  int currentPotValue = analogRead(POTENTIOMETER_PIN);
   
-  switch (currentFetalSensitivity) {
-    case 0:
-      Serial.println("Ultra Low Sensitivity)");
-      Serial.println("Best for: Extremely strong, clear fetal signals with no noise");
-      break;
-    case 1:
-      Serial.println("Very Low Sensitivity)");
-      Serial.println("Best for: Strong, clear fetal signals");
-      break;
-    case 2:
-      Serial.println("Low Sensitivity)");
-      Serial.println("Best for: Good fetal signals, minimal noise");
-      break;
-    case 3:
-      Serial.println("Medium Sensitivity)");
-      Serial.println("Best for: Standard monitoring conditions");
-      break;
-    case 4:
-      Serial.println("High Sensitivity)");
-      Serial.println("Best for: Weaker signals, typical conditions");
-      break;
-    case 5:
-      Serial.println("Very High Sensitivity)");
-      Serial.println("Best for: Very weak signals, difficult cases");
-      break;
-    case 6:
-      Serial.println("Ultra High Sensitivity)");
-      Serial.println("Best for: Extremely weak signals, maximum detection capability");
-      break;
+  // Only process if significant change detected and debounce time passed
+  if (abs(currentPotValue - lastPotValue) > CALIBRATION_THRESHOLD &&
+      millis() - lastCalibrationChange > CALIBRATION_DEBOUNCE) {
+    
+    // Update last values
+    lastPotValue = currentPotValue;
+    lastCalibrationChange = millis();
+    
+    // Enable calibration mode
+    usingCalibration = true;
+    
+    // Map potentiometer value (0-4095) to calibration parameters
+    // We'll adjust prominence (threshold) as primary calibration parameter
+    calibratedFetalProminence = map(currentPotValue, 0, 4095, 
+                                   MIN_PROMINENCE_VALUE * 1000, 
+                                   MAX_PROMINENCE_VALUE * 1000) / 1000.0;
+    
+    // Adjust distance and weight based on prominence to maintain overall sensitivity relationship
+    // Lower prominence (more sensitive) = shorter min distance (higher max BPM) and higher weight
+    float sensitivity = 1.0 - (calibratedFetalProminence - MIN_PROMINENCE_VALUE) / 
+                             (MAX_PROMINENCE_VALUE - MIN_PROMINENCE_VALUE);
+    
+    calibratedFetalMinDistance = SAMPLING_RATE * (MAX_DISTANCE_FACTOR - 
+                                 sensitivity * (MAX_DISTANCE_FACTOR - MIN_DISTANCE_FACTOR));
+    
+    calibratedFetalFilterWeight = MIN_FILTER_WEIGHT + 
+                                 sensitivity * (MAX_FILTER_WEIGHT - MIN_FILTER_WEIGHT);
+    
+    if (DEBUG_MODE) {
+      Serial.println("Calibration updated:");
+      Serial.print("Pot Value: ");
+      Serial.print(currentPotValue);
+      Serial.print(" | Prominence: ");
+      Serial.print(calibratedFetalProminence, 3);
+      Serial.print(" | Min Distance: ");
+      Serial.print(calibratedFetalMinDistance / SAMPLING_RATE, 2);
+      Serial.print("s | Filter Weight: ");
+      Serial.println(calibratedFetalFilterWeight, 3);
+    }
   }
-  
-  Serial.println("To change sensitivity level, edit 'currentFetalSensitivity' variable in code (0-6)");
+}
+
+/**
+ * Display calibration instructions
+ */
+void displayCalibrationInstructions() {
+  Serial.println("\n--- FETAL ECG CALIBRATION MODE ---");
+  Serial.println("Potentiometer on pin 26 controls detection sensitivity");
+  Serial.println("How to calibrate:");
+  Serial.println("1. Turn potentiometer fully clockwise for highest threshold (least sensitive)");
+  Serial.println("2. Turn potentiometer fully counter-clockwise for lowest threshold (most sensitive)");
+  Serial.println("3. If known fetal BPM is higher than detected, decrease threshold by turning counter-clockwise");
+  Serial.println("4. If false positives occur, increase threshold by turning clockwise");
+  Serial.println("5. Use LED indicators to confirm detection accuracy");
   Serial.println("----------------------------");
 }
 
@@ -371,19 +473,26 @@ float bandpassFilter(int rawEcg, bool isFetalFilter) {
   for (int i = 0; i < BUFFER_SIZE; i++) {
     float weight;
     if (isFetalFilter) {
-      // Get current sensitivity level parameters
-      float fetalWeight = FETAL_LEVELS[currentFetalSensitivity][2];
+      // Decide whether to use calibrated or predefined parameters
+      float fetalWeight = usingCalibration ? 
+                         calibratedFetalFilterWeight : 
+                         FETAL_LEVELS[currentFetalSensitivity][2];
       
       // Fetal filter with sensitivity-adjusted weight
       weight = fetalWeight * (1 - abs(i - BUFFER_SIZE/2.0)/(BUFFER_SIZE/2.0));
       
       // Add additional emphasis on the middle frequencies (fetal heartbeat range)
       if (i > BUFFER_SIZE/4 && i < BUFFER_SIZE*3/4) {
-        weight *= 1.2;
+        weight *= 1.5; // Increased from 1.2 for better fetal signal emphasis
       }
     } else {
       // Maternal filter: lower frequency components (doesn't change with sensitivity)
       weight = MATERNAL_WEIGHT * (1 - abs(i - BUFFER_SIZE/2.0)/(BUFFER_SIZE/2.0));
+      
+      // Add emphasis on maternal signal frequencies
+      if (i < BUFFER_SIZE/3) {
+        weight *= 1.4; // Emphasize lower frequencies for maternal signal
+      }
     }
     filtered += ecgBuffer[(bufferIndex - i + BUFFER_SIZE) % BUFFER_SIZE] * weight;
   }
@@ -406,9 +515,16 @@ void detectPeaks(float filteredEcg, bool isFetal) {
   unsigned long currentTime = millis();
   
   if (isFetal) {
-    // Get current sensitivity level parameters
-    float fetalProminence = FETAL_LEVELS[currentFetalSensitivity][0];
-    int fetalMinDistance = FETAL_LEVELS[currentFetalSensitivity][1];
+    // Decide whether to use calibrated or predefined parameters
+    float fetalProminence, fetalMinDistance;
+    
+    if (usingCalibration) {
+      fetalProminence = calibratedFetalProminence;
+      fetalMinDistance = calibratedFetalMinDistance;
+    } else {
+      fetalProminence = FETAL_LEVELS[currentFetalSensitivity][0];
+      fetalMinDistance = FETAL_LEVELS[currentFetalSensitivity][1];
+    }
     
     // Update min/max for adaptive thresholding (fetal)
     if (filteredEcg > fetalMaxValue) fetalMaxValue = filteredEcg;
@@ -429,7 +545,13 @@ void detectPeaks(float filteredEcg, bool isFetal) {
     if (filteredEcg > threshold && !fetalPeakDetected &&
         (currentTime - lastFetalPeak) >= fetalMinDistance) {
       
-      fetalConsecutivePeaks++;
+      // More immediate detection for initial peaks
+      if (fetalBpm == 0 || lastFetalPeak == 0) {
+        fetalConsecutivePeaks += 2; // Give more weight to initial peaks
+      } else {
+        fetalConsecutivePeaks++;
+      }
+      
       fetalPeakStrength = filteredEcg - threshold;
       
       if (fetalConsecutivePeaks >= PEAK_PERSISTENCE) {
@@ -440,18 +562,37 @@ void detectPeaks(float filteredEcg, bool isFetal) {
           
           // Acceptable ranges depend on sensitivity level
           int minBpm = 70;
-          int maxBpm = 180 + (currentFetalSensitivity * 20); // Higher sensitivity allows higher BPM
+          int maxBpm;
+          
+          if (usingCalibration) {
+            // For calibration mode, adjust max BPM based on min distance
+            maxBpm = min(300, (int)(60000 / max(fetalMinDistance, 1.0)));
+          } else {
+            // For preset sensitivity, use level-based formula
+            maxBpm = 180 + (currentFetalSensitivity * 20); // Higher sensitivity allows higher BPM
+          }
           
           if (newBpm >= minBpm && newBpm <= maxBpm) {
             // Add to BPM history
             fetalBpmHistory[bpmHistoryIndex % BPM_HISTORY_SIZE] = newBpm;
             
             // Weighted update based on peak strength and sensitivity
-            float weight = min(1.0, fetalPeakStrength / (30.0 - currentFetalSensitivity * 5.0));
-            fetalBpm = (int)(fetalBpm * (1.0 - weight) + newBpm * weight);
+            float weight;
+            if (usingCalibration) {
+              weight = min(1.0, fetalPeakStrength / (50.0 * fetalProminence));
+            } else {
+              weight = min(1.0, fetalPeakStrength / (30.0 - currentFetalSensitivity * 5.0));
+            }
             
-            // Ensure we have a value even on first detection
-            if (fetalBpm == 0) fetalBpm = newBpm;
+            // More aggressive weighting to new values
+            weight = min(0.6, weight + 0.2); // Increase the impact of new readings
+            
+            // Reset to zero logic can cause issues - avoid going to zero
+            if (fetalBpm == 0) {
+              fetalBpm = newBpm;
+            } else {
+              fetalBpm = (int)(fetalBpm * (1.0 - weight) + newBpm * weight);
+            }
             
             if (DEBUG_MODE) {
               Serial.print("F-Peak: ");
@@ -469,14 +610,19 @@ void detectPeaks(float filteredEcg, bool isFetal) {
         lastFetalPeak = currentTime;
         fetalConsecutivePeaks = 0; // Reset after detection
       }
-    } else if (filteredEcg < threshold * (0.7 - currentFetalSensitivity * 0.1)) { 
-      // Reset threshold varies with sensitivity
+    } else if (filteredEcg < threshold * (0.7 - (usingCalibration ? (1.0 - fetalProminence) : (currentFetalSensitivity * 0.1)))) {
+      // Reset threshold varies with sensitivity/calibration
       fetalPeakDetected = false;
       if (fetalConsecutivePeaks > 0) fetalConsecutivePeaks--;
     }
     
-    // Decay rates vary with sensitivity
-    float decayFactor = 0.99 - (currentFetalSensitivity * 0.01);
+    // Decay rates vary with sensitivity/calibration
+    float decayFactor;
+    if (usingCalibration) {
+      decayFactor = 0.99 - (0.1 * (1.0 - fetalProminence));
+    } else {
+      decayFactor = 0.99 - (currentFetalSensitivity * 0.01);
+    }
     fetalMaxValue = fetalMaxValue * decayFactor + filteredEcg * (1.0 - decayFactor);
     fetalMinValue = fetalMinValue * decayFactor + filteredEcg * (1.0 - decayFactor);
   } else {
@@ -496,7 +642,13 @@ void detectPeaks(float filteredEcg, bool isFetal) {
     if (filteredEcg > threshold && !maternalPeakDetected &&
         (currentTime - lastMaternalPeak) >= MATERNAL_MIN_DISTANCE) {
       
-      maternalConsecutivePeaks++;
+      // More immediate detection for initial peaks
+      if (maternalBpm == 0 || lastMaternalPeak == 0) {
+        maternalConsecutivePeaks += 2; // Give more weight to initial peaks
+      } else {
+        maternalConsecutivePeaks++;
+      }
+      
       maternalPeakStrength = filteredEcg - threshold;
       
       if (maternalConsecutivePeaks >= PEAK_PERSISTENCE) {
@@ -505,18 +657,21 @@ void detectPeaks(float filteredEcg, bool isFetal) {
           unsigned long interval = currentTime - lastMaternalPeak;
           int newBpm = 60000 / interval;
           
-          // More accepting range for maternal heartbeat
-          if (newBpm >= 30 && newBpm <= 200) {
+          // Acceptable range for maternal BPM
+          if (newBpm >= 40 && newBpm <= 150) {
             // Add to BPM history
             maternalBpmHistory[bpmHistoryIndex % BPM_HISTORY_SIZE] = newBpm;
-            bpmHistoryIndex = (bpmHistoryIndex + 1) % BPM_HISTORY_SIZE;
+            bpmHistoryIndex++;
             
             // Weighted update based on peak strength
-            float weight = min(1.0, maternalPeakStrength / 50.0);
-            maternalBpm = (int)(maternalBpm * (1.0 - weight) + newBpm * weight);
+            float weight = min(0.5, maternalPeakStrength / 100.0);
+            weight = min(0.6, weight + 0.2); // More aggressive weighting
             
-            // Ensure we have a value even on first detection
-            if (maternalBpm == 0) maternalBpm = newBpm;
+            if (maternalBpm == 0) {
+              maternalBpm = newBpm;
+            } else {
+              maternalBpm = (int)(maternalBpm * (1.0 - weight) + newBpm * weight);
+            }
             
             if (DEBUG_MODE) {
               Serial.print("M-Peak: ");
@@ -526,55 +681,45 @@ void detectPeaks(float filteredEcg, bool isFetal) {
             }
           }
         } else {
-          // First peak detected, set timestamp but no BPM yet
           if (DEBUG_MODE) {
             Serial.println("First maternal peak detected");
           }
         }
         lastMaternalPeak = currentTime;
-        maternalConsecutivePeaks = 0; // Reset after detection
+        maternalConsecutivePeaks = 0;
       }
-    } else if (filteredEcg < threshold * 0.6) { 
+    } else if (filteredEcg < threshold * 0.7) {
       maternalPeakDetected = false;
       if (maternalConsecutivePeaks > 0) maternalConsecutivePeaks--;
     }
     
-    // Adaptive decay based on signal stability
-    maternalMaxValue = maternalMaxValue * 0.96 + filteredEcg * 0.04;
-    maternalMinValue = maternalMinValue * 0.96 + filteredEcg * 0.04;
+    // Decay min/max values over time
+    maternalMaxValue = maternalMaxValue * 0.99 + filteredEcg * 0.01;
+    maternalMinValue = maternalMinValue * 0.99 + filteredEcg * 0.01;
   }
 }
 
 /**
- * Get current timestamp in ISO 8601 format for Firebase
+ * Send ECG data to Firebase
  */
-String getISOTimestamp() {
+void sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi connection lost. Attempting to reconnect...");
+    WiFi.begin(ssid, password);
+    return;
+  }
+
+  // Get current timestamp
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
     Serial.println("Failed to obtain time");
-    return "0000-00-00T00:00:00Z"; // Return default on failure
+    return;
   }
   
-  char timeStringBuff[30];
-  strftime(timeStringBuff, sizeof(timeStringBuff), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
-  return String(timeStringBuff);
-}
-
-/**
- * Send ECG data to Firebase database
- */
-bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
-  // Always send data, even with default values
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("❌ Wi-Fi disconnected. Trying to reconnect...");
-    WiFi.begin(ssid, password);
-    return false;
-  }
+  char timestamp[30];
+  strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &timeinfo);
   
-  // Get timestamp
-  String timestamp = getISOTimestamp();
-  
-  // Build the simplified JSON string directly
+  // Create JSON string
   String json = "{";
   json += "\"deviceId\":\"esp32\",";
   json += "\"bpm\":" + String(fetalBpm) + ",";
@@ -583,22 +728,22 @@ bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
   json += "\"smoothedEcg\":" + String((int)fetalFiltered);
   json += "}";
   
-  // Send data to Firebase
+  // Send to Firebase
   HTTPClient http;
   http.begin(FIREBASE_URL + "?auth=" + FIREBASE_AUTH);
   http.addHeader("Content-Type", "application/json");
   
-  int httpResponseCode = http.PUT(json);
+  int httpResponseCode = http.POST(json);
   
   if (httpResponseCode > 0) {
-    String response = http.getString();
-    Serial.println("✅ Data sent to Firebase");
-    http.end();
-    return true;
+    if (DEBUG_MODE) {
+      Serial.print("HTTP Response code: ");
+      Serial.println(httpResponseCode);
+    }
   } else {
-    Serial.print("❌ Firebase Error: ");
+    Serial.print("Error code: ");
     Serial.println(httpResponseCode);
-    http.end();
-    return false;
   }
-} 
+  
+  http.end();
+}
