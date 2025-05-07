@@ -4,8 +4,8 @@
 #include <ArduinoJson.h>
 
 // --- Wi-Fi Configuration ---
-const char *ssid = "HUAWEI-ec8a";
-const char *password = "fbbb38dm";
+const char *ssid = "BatStateU-DevOps";
+const char *password = "Dev3l$06";
 
 // --- Firebase Configuration ---
 const String FIREBASE_URL = "https://ecgdata-f042a-default-rtdb.asia-southeast1.firebasedatabase.app/ecg_readings.json";
@@ -18,8 +18,12 @@ const int daylightOffset_sec = 0;
 
 // --- Pin Definitions ---
 #define AD8232_OUTPUT 35    // Analog pin connected to AD8232 output
-#define LED_FETAL 33        // LED for fetal heartbeat
-#define POTENTIOMETER_PIN 26 // Potentiometer for calibration
+#define LED_FETAL 25        // LED for fetal heartbeat
+#define LED_MATERNAL 26     // LED for maternal heartbeat
+#define LED_STATUS 27       // LED for status indicator
+#define LO_PLUS 33          // LO+ pin for lead-off detection
+#define LO_MINUS 32         // LO- pin for lead-off detection
+#define POTENTIOMETER_PIN 14 // Potentiometer for calibration (changed from 26 to 14)
 
 // --- ECG Processing Constants ---
 const int SAMPLING_RATE = 200;  // Hz - Typical ECG sampling rate
@@ -127,6 +131,21 @@ unsigned long lastCalibrationChange = 0;
 const int CALIBRATION_THRESHOLD = 10; // Min change in potentiometer to trigger update
 const int CALIBRATION_DEBOUNCE = 200; // Min time between calibration changes in ms
 
+// --- Lead-off detection ---
+bool previousLeadOffState = true; // Start with leads off as default
+unsigned long lastGoodSignalTime = 0;
+const int LEAD_STABILIZATION_TIME = 2000; // Increased to 2 seconds
+const int LEAD_DEBOUNCE_TIME = 1000;      // Increased debounce time to 1 second
+unsigned long lastLeadStateChangeTime = 0;
+int consecutiveLeadOffReadings = 0;
+int consecutiveLeadOnReadings = 0;
+const int REQUIRED_CONSECUTIVE_OFF = 10; // Increased required readings for more stability
+const int REQUIRED_CONSECUTIVE_ON = 20;  // Require more ON readings before changing state
+
+// Additional variables for lead detection stability
+unsigned long validDataStartTime = 0;
+bool processingValidData = false;
+
 void setup() {
   Serial.begin(115200);
   Serial.println("Fetal ECG Monitor - CALIBRATION MODE");
@@ -134,6 +153,10 @@ void setup() {
   // Initialize pins
   pinMode(AD8232_OUTPUT, INPUT);
   pinMode(LED_FETAL, OUTPUT);
+  pinMode(LED_MATERNAL, OUTPUT);
+  pinMode(LED_STATUS, OUTPUT);
+  pinMode(LO_PLUS, INPUT);    // Setup LO+ pin
+  pinMode(LO_MINUS, INPUT);   // Setup LO- pin
   pinMode(POTENTIOMETER_PIN, INPUT);
   
   // Initialize buffer with zeros
@@ -181,8 +204,12 @@ void setup() {
   // Flash LEDs to indicate startup
   for (int i = 0; i < 3; i++) {
     digitalWrite(LED_FETAL, HIGH);
+    digitalWrite(LED_MATERNAL, HIGH);
+    digitalWrite(LED_STATUS, HIGH);
     delay(200);
     digitalWrite(LED_FETAL, LOW);
+    digitalWrite(LED_MATERNAL, LOW);
+    digitalWrite(LED_STATUS, LOW);
     delay(200);
   }
   
@@ -194,8 +221,117 @@ void setup() {
 }
 
 void loop() {
+  static unsigned long lastLeadMessageTime = 0;
+  
+  // Check if leads are connected to the body
+  // Note: The AD8232 LO pins are HIGH when leads are disconnected, LOW when connected
+  bool loPlus = digitalRead(LO_PLUS);
+  bool loMinus = digitalRead(LO_MINUS);
+  
+  // Implement debouncing for lead detection with hysteresis
+  if (loPlus || loMinus) {
+    // Potential lead-off detected
+    consecutiveLeadOffReadings++;
+    consecutiveLeadOnReadings = 0;
+  } else {
+    // Potential lead-on detected
+    consecutiveLeadOnReadings++;
+    if (consecutiveLeadOffReadings > 0) consecutiveLeadOffReadings--;
+  }
+  
+  // Determine stable lead state after enough consecutive readings with hysteresis
+  bool leadsOff = previousLeadOffState;  // Default to previous state
+  
+  // Apply different thresholds depending on current state (hysteresis)
+  if (previousLeadOffState) {
+    // Currently in leads-off state, require more ON readings to change state
+    if (consecutiveLeadOnReadings >= REQUIRED_CONSECUTIVE_ON) {
+      leadsOff = false;  // Change to leads-on
+    }
+  } else {
+    // Currently in leads-on state, don't change too quickly
+    if (consecutiveLeadOffReadings >= REQUIRED_CONSECUTIVE_OFF) {
+      leadsOff = true;   // Change to leads-off
+    }
+  }
+  
+  // Only process state changes after debounce time
+  if (leadsOff != previousLeadOffState && (millis() - lastLeadStateChangeTime > LEAD_DEBOUNCE_TIME)) {
+    previousLeadOffState = leadsOff;
+    lastLeadStateChangeTime = millis();
+    
+    if (leadsOff) {
+      Serial.println("● Leads disconnected - please check electrode connections");
+      processingValidData = false;  // Stop data processing
+    } else {
+      Serial.println("◌ Leads connected - waiting for signal to stabilize");
+      lastGoodSignalTime = millis(); // Reset stabilization timer
+    }
+  }
+  
+  // Signal status with LED
+  digitalWrite(LED_STATUS, leadsOff ? HIGH : LOW);
+  
+  // Handle lead-off condition
+  if (leadsOff) {
+    // Print status message but limit frequency to avoid spamming
+    if (millis() - lastLeadMessageTime > 3000) { // Reduced frequency to every 3 seconds
+      Serial.print("● Leads off - LO+: ");
+      Serial.print(loPlus ? "OFF" : "ON");
+      Serial.print(", LO-: ");
+      Serial.println(loMinus ? "OFF" : "ON");
+      lastLeadMessageTime = millis();
+    }
+    
+    // Flash status LED to indicate lead-off condition
+    digitalWrite(LED_STATUS, (millis() / 250) % 2); // Flash twice per second
+    
+    // Turn off other LEDs
+    digitalWrite(LED_FETAL, LOW);
+    digitalWrite(LED_MATERNAL, LOW);
+    
+    // Reset data processing flags
+    processingValidData = false;
+    
+    // Short delay before checking again
+    delay(100);
+    return; // Exit the loop to check leads again
+  }
+  
+  // If leads are connected but signal is still stabilizing
+  if (!leadsOff && (millis() - lastGoodSignalTime < LEAD_STABILIZATION_TIME)) {
+    // Still stabilizing
+    if (millis() - lastLeadMessageTime > 500) { // Limit message frequency
+      Serial.println("◌ Signal stabilizing...");
+      lastLeadMessageTime = millis();
+    }
+    
+    digitalWrite(LED_STATUS, (millis() / 125) % 2); // Flash faster during stabilization
+    delay(100);
+    return;
+  }
+  
+  // If we get here, leads are connected and signal is stable
+  // But also check if this is the first time we've reached this point
+  if (!processingValidData) {
+    processingValidData = true;
+    validDataStartTime = millis();
+    Serial.println("✓ Leads connected and stable - processing ECG data");
+  }
+  
   // Read raw ECG value
   int rawEcg = analogRead(AD8232_OUTPUT);
+  
+  // Additional sanity check on signal quality
+  if (rawEcg <= 100) { // Check for abnormally low values
+    // Count consecutive bad readings but don't immediately change lead state
+    if (millis() - lastLeadMessageTime > 500) {
+      Serial.println("! Low signal detected - check electrode contact");
+      lastLeadMessageTime = millis();
+    }
+    delay(50);
+    return; // Skip this cycle and check again
+  }
   
   // Check potentiometer for calibration adjustment
   checkPotentiometerCalibration();
@@ -306,6 +442,12 @@ void loop() {
     digitalWrite(LED_FETAL, LOW);
   }
   
+  if (millis() - lastMaternalPeak < 200) {
+    digitalWrite(LED_MATERNAL, HIGH);
+  } else {
+    digitalWrite(LED_MATERNAL, LOW);
+  }
+  
   // Display BPM values on Serial monitor
   static unsigned long lastDisplayTime = 0;
   if (millis() - lastDisplayTime >= 1000) {
@@ -369,7 +511,7 @@ void loop() {
   // More appropriate sampling delay based on actual processing time
   static unsigned long lastSampleTime = 0;
   unsigned long processingTime = millis() - lastSampleTime;
-  int delayTime = max(1, 5 - (int)processingTime); // Aim for 5ms per sample
+  int delayTime = max(1, (int)(5 - processingTime)); // Aim for 5ms per sample
   delay(delayTime);
   lastSampleTime = millis();
 }
@@ -379,6 +521,21 @@ void loop() {
  */
 void checkPotentiometerCalibration() {
   int currentPotValue = analogRead(POTENTIOMETER_PIN);
+  static unsigned long lastPotDisplayTime = 0;
+  
+  // Always display current pot value at regular intervals when in debug mode
+  if (DEBUG_MODE && millis() - lastPotDisplayTime > 2000) {
+    lastPotDisplayTime = millis();
+    Serial.print("Current Potentiometer Value: ");
+    Serial.print(currentPotValue);
+    Serial.print(" (0-4095) | Last Value: ");
+    Serial.println(lastPotValue);
+    
+    // Flash the STATUS LED briefly to show pot reading is active
+    digitalWrite(LED_STATUS, HIGH);
+    delay(10);
+    digitalWrite(LED_STATUS, LOW);
+  }
   
   // Only process if significant change detected and debounce time passed
   if (abs(currentPotValue - lastPotValue) > CALIBRATION_THRESHOLD &&
@@ -390,6 +547,13 @@ void checkPotentiometerCalibration() {
     
     // Enable calibration mode
     usingCalibration = true;
+    
+    // Visual feedback - blink both LEDs to confirm calibration change
+    digitalWrite(LED_FETAL, HIGH);
+    digitalWrite(LED_MATERNAL, HIGH);
+    delay(50);
+    digitalWrite(LED_FETAL, LOW);
+    digitalWrite(LED_MATERNAL, LOW);
     
     // Map potentiometer value (0-4095) to calibration parameters
     // We'll adjust prominence (threshold) as primary calibration parameter
@@ -408,17 +572,20 @@ void checkPotentiometerCalibration() {
     calibratedFetalFilterWeight = MIN_FILTER_WEIGHT + 
                                  sensitivity * (MAX_FILTER_WEIGHT - MIN_FILTER_WEIGHT);
     
-    if (DEBUG_MODE) {
-      Serial.println("Calibration updated:");
-      Serial.print("Pot Value: ");
-      Serial.print(currentPotValue);
-      Serial.print(" | Prominence: ");
-      Serial.print(calibratedFetalProminence, 3);
-      Serial.print(" | Min Distance: ");
-      Serial.print(calibratedFetalMinDistance / SAMPLING_RATE, 2);
-      Serial.print("s | Filter Weight: ");
-      Serial.println(calibratedFetalFilterWeight, 3);
-    }
+    // Always show calibration changes regardless of debug mode
+    Serial.println("\n--- CALIBRATION CHANGED ---");
+    Serial.print("Pot Value: ");
+    Serial.print(currentPotValue);
+    Serial.print("/4095 (");
+    Serial.print(map(currentPotValue, 0, 4095, 0, 100));
+    Serial.println("%)");
+    Serial.print("Prominence: ");
+    Serial.print(calibratedFetalProminence, 3);
+    Serial.print(" | Min Distance: ");
+    Serial.print(calibratedFetalMinDistance / SAMPLING_RATE, 2);
+    Serial.print("s | Filter Weight: ");
+    Serial.print(calibratedFetalFilterWeight, 3);
+    Serial.println("\n--------------------------");
   }
 }
 
@@ -427,7 +594,7 @@ void checkPotentiometerCalibration() {
  */
 void displayCalibrationInstructions() {
   Serial.println("\n--- FETAL ECG CALIBRATION MODE ---");
-  Serial.println("Potentiometer on pin 26 controls detection sensitivity");
+  Serial.println("Potentiometer on pin 14 controls detection sensitivity");
   Serial.println("How to calibrate:");
   Serial.println("1. Turn potentiometer fully clockwise for highest threshold (least sensitive)");
   Serial.println("2. Turn potentiometer fully counter-clockwise for lowest threshold (most sensitive)");
@@ -566,7 +733,7 @@ void detectPeaks(float filteredEcg, bool isFetal) {
           
           if (usingCalibration) {
             // For calibration mode, adjust max BPM based on min distance
-            maxBpm = min(300, (int)(60000 / max(fetalMinDistance, 1.0)));
+            maxBpm = min(300, (int)(60000 / max(fetalMinDistance, 1.0f)));
           } else {
             // For preset sensitivity, use level-based formula
             maxBpm = 180 + (currentFetalSensitivity * 20); // Higher sensitivity allows higher BPM
