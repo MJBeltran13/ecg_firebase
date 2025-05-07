@@ -10,6 +10,10 @@
  * - LEDs: Fetal -> Pin 25, Maternal -> Pin 26, Status -> Pin 27
  */
 
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
 // Pin definitions
 #define AD8232_OUTPUT 35    // Analog pin connected to AD8232 output
 #define POTENTIOMETER_PIN 14 // Potentiometer for calibration
@@ -40,9 +44,9 @@ const int MIN_FETAL_BPM = 90;     // Minimum fetal heart rate
 const int MAX_FETAL_BPM = 220;     // Maximum fetal heart rate
 
 // Variables for potentiometer and sensitivity control
-int potValue = 0;
-float prominence = 0.02;         // Threshold for peak detection (adjusted by pot)
-int minPeakDistance = 300;      // Minimum time between peaks (adjusted by pot)
+int potValue = 5;            // Fixed potentiometer value
+float prominence = 0.02;     // Threshold for peak detection (adjusted by pot)
+int minPeakDistance = 300;   // Minimum time between peaks (adjusted by pot)
 unsigned long lastPotReport = 0;
 
 // BPM detection variables 
@@ -93,9 +97,30 @@ float pt_peak = 0;         // Peak level
 float pt_npk = 0;          // Noise peak level
 int pt_rr_missed = 0;      // Counter for missed beats
 
+// Firebase configuration
+#define FIREBASE_URL "https://your-firebase-url.firebaseio.com"  // Replace with your Firebase URL
+#define FIREBASE_AUTH ""  // Replace with your Firebase auth token if needed
+#define WIFI_SSID "your-wifi-ssid"  // Replace with your WiFi SSID
+#define WIFI_PASSWORD "your-wifi-password"  // Replace with your WiFi password
+
+// Device identification
+String deviceId = "ESP32_" + String((uint32_t)ESP.getEfuseMac(), HEX);
+unsigned long readingCounter = 0;
+
 void setup() {
   Serial.begin(115200);
   delay(500);
+  
+  // Initialize WiFi
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
   
   // Initialize pins
   pinMode(AD8232_OUTPUT, INPUT);
@@ -141,7 +166,7 @@ void loop() {
   }
   
   // Read potentiometer and update sensitivity parameters
-  // updateSensitivityFromPot();
+  updateSensitivityFromPot();
   
   // Read and filter ECG signal
   int rawEcg = analogRead(AD8232_OUTPUT);
@@ -533,6 +558,95 @@ void displayInfo(int rawEcg, float filteredEcg) {
     Serial.println("-------------------");
   }
   
+  // Send data to Firebase every second
+  static unsigned long lastFirebaseUpdate = 0;
+  if (millis() - lastFirebaseUpdate >= 1000) {
+    lastFirebaseUpdate = millis();
+    sendToFirebase(rawEcg, filteredEcg, filteredEcg);  // Using same filtered value for both fetal and maternal for now
+  }
+  
   // Small delay to control data rate
   delay(1);
+}
+
+void reconnectWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print("Reconnecting to WiFi");
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nReconnected to WiFi");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+    } else {
+      Serial.println("\nFailed to reconnect to WiFi");
+    }
+  }
+}
+
+String getISOTimestamp() {
+  // Get current time from NTP server
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to obtain time");
+    return "1970-01-01T00:00:00Z";
+  }
+  
+  char timeStringBuff[50];
+  strftime(timeStringBuff, sizeof(timeStringBuff), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  return String(timeStringBuff);
+}
+
+bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
+  // Don't send if fetalBpm is 0
+  if (fetalBpm == 0) {
+    return false;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("❌ Wi-Fi disconnected. Trying to reconnect...");
+    reconnectWiFi();
+    return false;
+  }
+
+  String timestamp = getISOTimestamp();
+
+  // Construct JSON
+  String json = "{";
+  json += "\"deviceId\":\"esp32\",";
+  json += "\"bpm\":" + String(fetalBpm) + ",";
+  json += "\"timestamp\":\"" + String(timestamp) + "\",";
+  json += "\"rawEcg\":" + String(rawEcg) + ",";
+  json += "\"smoothedEcg\":" + String(filteredEcg);
+  json += "}";
+
+  String firebasePath = FIREBASE_URL + "/readings.json";
+  if (FIREBASE_AUTH.length() > 0) {
+    firebasePath += "?auth=" + FIREBASE_AUTH;
+  }
+
+  HTTPClient http;
+  http.begin(firebasePath);
+  http.addHeader("Content-Type", "application/json");
+
+  int httpResponseCode = http.PUT(json);
+
+  if (httpResponseCode >= 200 && httpResponseCode < 300) {
+    Serial.println("✅ Data sent to Firebase successfully!");
+    Serial.println("BPM: " + String(fetalBpm));
+    http.end();
+    return true;
+  } else {
+    Serial.print("❌ Firebase error: ");
+    Serial.println(httpResponseCode);
+    Serial.println("Response: " + http.getString());
+    http.end();
+    return false;
+  }
 } 
