@@ -7,7 +7,7 @@
  * Hardware connections:
  * - AD8232: OUTPUT -> Pin 35, LO+ -> Pin 33, LO- -> Pin 32
  * - Potentiometer: Middle pin -> ESP32 pin 14
- * - LEDs: Fetal -> Pin 25, Maternal -> Pin 26, Status -> Pin 27
+ * - LEDs: Fetal -> Pin 25, Working -> Pin 26, WiFi -> Pin 27
  */
 
 #include <WiFi.h>
@@ -18,10 +18,17 @@
 #define AD8232_OUTPUT 35    // Analog pin connected to AD8232 output
 #define POTENTIOMETER_PIN 14 // Potentiometer for calibration
 #define LED_FETAL 25        // LED for fetal heartbeat
-#define LED_MATERNAL 26     // LED for maternal heartbeat 
-#define LED_STATUS 27       // LED for status
+#define LED_WORKING 26      // Green LED for device operation
+#define LED_WIFI 27         // Yellow LED for WiFi status
 #define LO_PLUS 33          // LO+ pin for lead-off detection
 #define LO_MINUS 32         // LO- pin for lead-off detection
+#define BATTERY_PIN 34      // Analog pin for battery voltage measurement
+
+// Battery monitoring constants
+#define BATTERY_CHECK_INTERVAL 5000  // Check battery every 5 seconds
+#define BATTERY_LOW_THRESHOLD 3.3    // Low battery threshold voltage
+#define BATTERY_CRITICAL_THRESHOLD 3.0 // Critical battery threshold voltage
+#define VOLTAGE_DIVIDER_RATIO 2.0    // Voltage divider ratio if used
 
 // ECG processing constants
 const int SAMPLING_RATE = 200;  // Hz - Typical ECG sampling rate
@@ -107,6 +114,46 @@ int pt_rr_missed = 0;      // Counter for missed beats
 String deviceId = "ESP32_" + String((uint32_t)ESP.getEfuseMac(), HEX);
 unsigned long readingCounter = 0;
 
+// Add these variables after other global variables
+unsigned long lastBatteryCheck = 0;
+float batteryVoltage = 0.0;
+
+// Add these LED state variables after other global variables
+bool ledWorkingState = false;
+bool ledWifiState = false;
+unsigned long lastLedUpdate = 0;
+
+// Add this function before setup()
+float getBatteryVoltage() {
+  // Read raw value and convert to voltage
+  int rawValue = analogRead(BATTERY_PIN);
+  // ESP32 ADC reference voltage is 3.3V and resolution is 12-bit (0-4095)
+  float voltage = (rawValue * 3.3 / 4095.0) * VOLTAGE_DIVIDER_RATIO;
+  return voltage;
+}
+
+void checkBatteryStatus() {
+  if (millis() - lastBatteryCheck >= BATTERY_CHECK_INTERVAL) {
+    lastBatteryCheck = millis();
+    batteryVoltage = getBatteryVoltage();
+    
+    // Print battery status
+    Serial.print("Battery Voltage: ");
+    Serial.print(batteryVoltage, 2);
+    Serial.println("V");
+    
+    // Update LED patterns based on battery status
+    if (batteryVoltage <= BATTERY_CRITICAL_THRESHOLD) {
+      // Critical battery - rapid blinking of working LED
+      digitalWrite(LED_WORKING, (millis() / 250) % 2);
+    } else if (batteryVoltage <= BATTERY_LOW_THRESHOLD) {
+      // Low battery - slow blinking of working LED
+      digitalWrite(LED_WORKING, (millis() / 1000) % 2);
+    }
+    // Normal battery level is handled in the main loop
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(500);
@@ -126,10 +173,11 @@ void setup() {
   pinMode(AD8232_OUTPUT, INPUT);
   pinMode(POTENTIOMETER_PIN, INPUT);
   pinMode(LED_FETAL, OUTPUT);
-  pinMode(LED_MATERNAL, OUTPUT);
-  pinMode(LED_STATUS, OUTPUT);
+  pinMode(LED_WORKING, OUTPUT);
+  pinMode(LED_WIFI, OUTPUT);
   pinMode(LO_PLUS, INPUT);
   pinMode(LO_MINUS, INPUT);
+  pinMode(BATTERY_PIN, INPUT);
   
   // Initialize buffer
   for (int i = 0; i < BUFFER_SIZE; i++) {
@@ -139,12 +187,12 @@ void setup() {
   // Initial LED test - flash all LEDs
   for (int i = 0; i < 3; i++) {
     digitalWrite(LED_FETAL, HIGH);
-    digitalWrite(LED_MATERNAL, HIGH);
-    digitalWrite(LED_STATUS, HIGH);
+    digitalWrite(LED_WORKING, HIGH);
+    digitalWrite(LED_WIFI, HIGH);
     delay(200);
     digitalWrite(LED_FETAL, LOW);
-    digitalWrite(LED_MATERNAL, LOW);
-    digitalWrite(LED_STATUS, LOW);
+    digitalWrite(LED_WORKING, LOW);
+    digitalWrite(LED_WIFI, LOW);
     delay(200);
   }
   
@@ -157,29 +205,30 @@ void setup() {
 }
 
 void loop() {
+  // Check battery status first
+  checkBatteryStatus();
+  
   // Check for leads-off condition
   bool leadsOff = checkLeadsOff();
   
-  // If leads are off, don't process ECG
-  if (leadsOff) {
-    return;
-  }
-  
-  // Read potentiometer and update sensitivity parameters
-  updateSensitivityFromPot();
-  
-  // Read and filter ECG signal
-  int rawEcg = analogRead(AD8232_OUTPUT);
-  float filteredEcg = filterEcg(rawEcg);
-  
-  // Detect peaks and calculate BPM
-  detectPeaksAndCalculateBpm(filteredEcg);
-  
-  // Update LEDs for visual feedback
+  // Update all LEDs
   updateLeds();
   
-  // Display information periodically
-  displayInfo(rawEcg, filteredEcg);
+  // Only process ECG if leads are connected and battery is not critical
+  if (!leadsOff && batteryVoltage > BATTERY_CRITICAL_THRESHOLD) {
+    // Read potentiometer and update sensitivity parameters
+    updateSensitivityFromPot();
+    
+    // Read and filter ECG signal
+    int rawEcg = analogRead(AD8232_OUTPUT);
+    float filteredEcg = filterEcg(rawEcg);
+    
+    // Detect peaks and calculate BPM
+    detectPeaksAndCalculateBpm(filteredEcg);
+    
+    // Display information periodically
+    displayInfo(rawEcg, filteredEcg);
+  }
   
   // Maintain consistent sampling rate
   static unsigned long lastSampleTime = 0;
@@ -225,13 +274,6 @@ bool checkLeadsOff() {
     Serial.print(", LO-: ");
     Serial.println(loMinus ? "OFF" : "ON");
     lastLeadMessage = millis();
-  }
-  
-  // Update status LED
-  if (!leadsConnected) {
-    digitalWrite(LED_STATUS, (millis() / 250) % 2); // Blink for lead-off
-  } else {
-    digitalWrite(LED_STATUS, LOW); // Solid for connected
   }
   
   return !leadsConnected;
@@ -282,10 +324,10 @@ void updateSensitivityFromPot() {
       
       // Flash LEDs to indicate sensitivity change
       digitalWrite(LED_FETAL, HIGH);
-      digitalWrite(LED_MATERNAL, HIGH);
+      digitalWrite(LED_WORKING, HIGH);
       delay(30);
       digitalWrite(LED_FETAL, LOW);
-      digitalWrite(LED_MATERNAL, LOW);
+      digitalWrite(LED_WORKING, LOW);
     }
   }
 }
@@ -473,19 +515,43 @@ void detectPeaksAndCalculateBpm(float filteredEcg) {
  * Update LEDs based on heartbeat and status
  */
 void updateLeds() {
-  // Fetal LED pulses with each detected fetal peak
+  unsigned long currentMillis = millis();
+  
+  // Update LED_FETAL based on fetal heartbeat
   if (millis() - lastFetalPeak < 150 && fetalBpm > 0) {
     digitalWrite(LED_FETAL, HIGH);
   } else {
     digitalWrite(LED_FETAL, LOW);
   }
   
-  // Maternal LED pulses with each detected maternal peak
-  if (millis() - lastMaternalPeak < 150 && maternalBpm > 0) {
-    digitalWrite(LED_MATERNAL, HIGH);
+  // Update LED_WORKING based on device state priority:
+  // 1. Battery Critical (fast blink)
+  // 2. Battery Low (slow blink)
+  // 3. Lead-off (off)
+  // 4. Normal operation (solid on)
+  if (batteryVoltage <= BATTERY_CRITICAL_THRESHOLD) {
+    // Critical battery - rapid blinking (4 times per second)
+    ledWorkingState = (currentMillis / 250) % 2;
+  } else if (batteryVoltage <= BATTERY_LOW_THRESHOLD) {
+    // Low battery - slow blinking (once per second)
+    ledWorkingState = (currentMillis / 1000) % 2;
+  } else if (!leadsConnected) {
+    // Leads off - LED off
+    ledWorkingState = false;
   } else {
-    digitalWrite(LED_MATERNAL, LOW);
+    // Normal operation - solid on
+    ledWorkingState = true;
   }
+  digitalWrite(LED_WORKING, ledWorkingState);
+  
+  // Update LED_WIFI based on WiFi status
+  if (WiFi.status() == WL_CONNECTED) {
+    ledWifiState = true;
+  } else {
+    // Blink when disconnected (twice per second)
+    ledWifiState = (currentMillis / 500) % 2;
+  }
+  digitalWrite(LED_WIFI, ledWifiState);
 }
 
 /**
@@ -502,14 +568,6 @@ void displayInfo(int rawEcg, float filteredEcg) {
   Serial.print(potValue);
   Serial.print(",");
   
-  // Output maternal BPM (show 0 if no recent detection)
-  if (maternalBpm > 0 && millis() - lastMaternalPeak < 5000) {
-    Serial.print(maternalBpm);
-  } else {
-    Serial.print("0");
-  }
-  Serial.print(",");
-  
   // Output fetal BPM (show 0 if no recent detection)
   if (fetalBpm > 0 && millis() - lastFetalPeak < 5000) {
     Serial.print(fetalBpm);
@@ -518,24 +576,34 @@ void displayInfo(int rawEcg, float filteredEcg) {
   }
   Serial.println();
   
-  // Print detailed BPM information to Serial Monitor every second
+  // Print detailed information to Serial Monitor every second
   static unsigned long lastDetailedPrint = 0;
   if (millis() - lastDetailedPrint >= 1000) {
     lastDetailedPrint = millis();
     
-    Serial.println("\n--- BPM Information ---");
-    Serial.print("Maternal BPM: ");
-    if (maternalBpm > 0 && millis() - lastMaternalPeak < 5000) {
-      Serial.print(maternalBpm);
-      Serial.println(" ❤");
+    Serial.println("\n--- Device Status ---");
+    
+    // Battery Status
+    Serial.print("Battery: ");
+    Serial.print(batteryVoltage, 2);
+    Serial.print("V (");
+    if (batteryVoltage <= BATTERY_CRITICAL_THRESHOLD) {
+      Serial.println("CRITICAL)");
+    } else if (batteryVoltage <= BATTERY_LOW_THRESHOLD) {
+      Serial.println("LOW)");
     } else {
-      Serial.println("--");
+      Serial.println("GOOD)");
     }
     
+    // WiFi Status
+    Serial.print("WiFi: ");
+    Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+    
+    // ECG Status
     Serial.print("Fetal BPM: ");
     if (fetalBpm > 0 && millis() - lastFetalPeak < 5000) {
       Serial.print(fetalBpm);
-      Serial.println(" 👶");
+      Serial.println(" ❤");
     } else {
       Serial.println("--");
     }
@@ -619,11 +687,16 @@ bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
 
   // Construct JSON
   String json = "{";
-  json += "\"deviceId\":\"esp32\",";
+  json += "\"deviceId\":\"" + deviceId + "\",";
   json += "\"bpm\":" + String(fetalBpm) + ",";
   json += "\"timestamp\":\"" + String(timestamp) + "\",";
   json += "\"rawEcg\":" + String(rawEcg) + ",";
-  json += "\"smoothedEcg\":" + String(filteredEcg);
+  json += "\"smoothedEcg\":" + String(filteredEcg) + ",";
+  json += "\"batteryVoltage\":" + String(batteryVoltage, 2) + ",";
+  json += "\"batteryStatus\":\"" + String(batteryVoltage <= BATTERY_CRITICAL_THRESHOLD ? "CRITICAL" : 
+                                        (batteryVoltage <= BATTERY_LOW_THRESHOLD ? "LOW" : "GOOD")) + "\",";
+  json += "\"wifiStrength\":" + String(WiFi.RSSI()) + ",";
+  json += "\"wifiStatus\":\"" + String(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DISCONNECTED") + "\"";
   json += "}";
 
   String firebasePath = FIREBASE_URL + "/readings.json";
