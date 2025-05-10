@@ -1,8 +1,9 @@
 /*
- * Potentiometer + ECG BPM Test
+ * Potentiometer + ECG BPM Test with FreeRTOS
  * 
  * This sketch allows testing the potentiometer on pin 14 while also
- * detecting BPM from the AD8232 ECG sensor.
+ * detecting BPM from the AD8232 ECG sensor. It uses FreeRTOS to manage
+ * different tasks concurrently.
  * 
  * Hardware connections:
  * - AD8232: OUTPUT -> Pin 35, LO+ -> Pin 33, LO- -> Pin 32
@@ -13,6 +14,31 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+// ESP32 Arduino core has built-in FreeRTOS
+
+// RTOS settings
+#define STACK_SIZE 4096                // Stack size for tasks
+#define ECG_TASK_PRIORITY 3            // Highest priority for ECG sampling
+#define LED_TASK_PRIORITY 2            // Medium priority for LED updates
+#define BATTERY_TASK_PRIORITY 1        // Lower priority for battery monitoring
+#define FIREBASE_TASK_PRIORITY 1       // Lower priority for Firebase uploads
+#define POTENTIOMETER_TASK_PRIORITY 2  // Medium priority for potentiometer reading
+
+// RTOS task handles
+TaskHandle_t ecgTaskHandle = NULL;
+TaskHandle_t ledTaskHandle = NULL;
+TaskHandle_t batteryTaskHandle = NULL;
+TaskHandle_t firebaseTaskHandle = NULL;
+TaskHandle_t potentiometerTaskHandle = NULL;
+
+// Data protection
+SemaphoreHandle_t ecgMutex;
+SemaphoreHandle_t bpmMutex;
+SemaphoreHandle_t batteryMutex;
+
+// RTOS queues for communication between tasks
+QueueHandle_t ecgDataQueue;
+QueueHandle_t bpmDataQueue;
 
 // Pin definitions
 #define AD8232_OUTPUT 35    // Analog pin connected to AD8232 output
@@ -123,6 +149,20 @@ bool ledWorkingState = false;
 bool ledWifiState = false;
 unsigned long lastLedUpdate = 0;
 
+// Struct to pass ECG data between tasks
+typedef struct {
+  int rawEcg;
+  float filteredEcg;
+  unsigned long timestamp;
+} EcgData_t;
+
+// Struct for BPM data
+typedef struct {
+  int fetalBpm;
+  int maternalBpm;
+  unsigned long timestamp;
+} BpmData_t;
+
 // Add this function before setup()
 float getBatteryVoltage() {
   // Read raw value and convert to voltage
@@ -135,22 +175,325 @@ float getBatteryVoltage() {
 void checkBatteryStatus() {
   if (millis() - lastBatteryCheck >= BATTERY_CHECK_INTERVAL) {
     lastBatteryCheck = millis();
-    batteryVoltage = getBatteryVoltage();
+    
+    if (xSemaphoreTake(batteryMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      batteryVoltage = getBatteryVoltage();
+      xSemaphoreGive(batteryMutex);
+    }
     
     // Print battery status
     Serial.print("Battery Voltage: ");
     Serial.print(batteryVoltage, 2);
     Serial.println("V");
+  }
+}
+
+/**
+ * Task for ECG signal acquisition and processing
+ */
+void ecgTask(void *parameter) {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(5); // 200Hz sampling
+  EcgData_t ecgData;
+  
+  while (1) {
+    // Check for leads-off condition
+    bool loPlus = digitalRead(LO_PLUS);
+    bool loMinus = digitalRead(LO_MINUS);
+    bool currentLeadsOff = (loPlus || loMinus);
     
-    // Update LED patterns based on battery status
-    if (batteryVoltage <= BATTERY_CRITICAL_THRESHOLD) {
-      // Critical battery - rapid blinking of working LED
-      digitalWrite(LED_WORKING, (millis() / 250) % 2);
-    } else if (batteryVoltage <= BATTERY_LOW_THRESHOLD) {
-      // Low battery - slow blinking of working LED
-      digitalWrite(LED_WORKING, (millis() / 1000) % 2);
+    // Update leads connected status with debouncing
+    static int consecutiveReadings = 0;
+    if (currentLeadsOff != !leadsConnected) {
+      consecutiveReadings++;
+      if (consecutiveReadings > 10) {
+        leadsConnected = !currentLeadsOff;
+        consecutiveReadings = 0;
+        lastLeadChange = millis();
+        
+        if (leadsConnected) {
+          Serial.println("✓ Leads connected");
+        } else {
+          Serial.println("✗ Leads disconnected");
+        }
+      }
+    } else {
+      consecutiveReadings = 0;
     }
-    // Normal battery level is handled in the main loop
+    
+    // Only process ECG if leads are connected
+    if (leadsConnected) {
+      // Read and filter ECG signal
+      int rawEcg = analogRead(AD8232_OUTPUT);
+      
+      // Take mutex for buffer access
+      if (xSemaphoreTake(ecgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        float filteredEcg = filterEcg(rawEcg);
+        
+        // Prepare data structure
+        ecgData.rawEcg = rawEcg;
+        ecgData.filteredEcg = filteredEcg;
+        ecgData.timestamp = millis();
+        
+        // Send to processing queue
+        xQueueSend(ecgDataQueue, &ecgData, 0);
+        
+        // Detect peaks and calculate BPM
+        detectPeaksAndCalculateBpm(filteredEcg);
+        
+        xSemaphoreGive(ecgMutex);
+      }
+      
+      // Prepare BPM data if needed
+      if (xSemaphoreTake(bpmMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        if ((fetalBpm > 0 && millis() - lastFetalPeak < 5000) || 
+            (maternalBpm > 0 && millis() - lastMaternalPeak < 5000)) {
+          
+          BpmData_t bpmData;
+          bpmData.fetalBpm = fetalBpm;
+          bpmData.maternalBpm = maternalBpm;
+          bpmData.timestamp = millis();
+          
+          // Send to BPM queue (overwrite old data if queue is full)
+          xQueueOverwrite(bpmDataQueue, &bpmData);
+        }
+        xSemaphoreGive(bpmMutex);
+      }
+    }
+    
+    // Wait for the next cycle using vTaskDelayUntil to ensure consistent timing
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+/**
+ * Task for updating LEDs
+ */
+void ledTask(void *parameter) {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(50); // 20Hz update rate
+  
+  while (1) {
+    unsigned long currentMillis = millis();
+    
+    // Take BPM mutex to access heartbeat data
+    if (xSemaphoreTake(bpmMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      // Update LED_FETAL based on fetal heartbeat
+      if (millis() - lastFetalPeak < 150 && fetalBpm > 0) {
+        digitalWrite(LED_FETAL, HIGH);
+      } else {
+        digitalWrite(LED_FETAL, LOW);
+      }
+      xSemaphoreGive(bpmMutex);
+    }
+    
+    // Take battery mutex to access battery status
+    if (xSemaphoreTake(batteryMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      // Update LED_WORKING based on device state priority
+      if (batteryVoltage <= BATTERY_CRITICAL_THRESHOLD) {
+        // Critical battery - rapid blinking (4 times per second)
+        ledWorkingState = (currentMillis / 250) % 2;
+      } else if (batteryVoltage <= BATTERY_LOW_THRESHOLD) {
+        // Low battery - slow blinking (once per second)
+        ledWorkingState = (currentMillis / 1000) % 2;
+      } else if (!leadsConnected) {
+        // Leads off - LED off
+        ledWorkingState = false;
+      } else {
+        // Normal operation - solid on
+        ledWorkingState = true;
+      }
+      xSemaphoreGive(batteryMutex);
+    }
+    
+    digitalWrite(LED_WORKING, ledWorkingState);
+    
+    // Update LED_WIFI based on WiFi status
+    if (WiFi.status() == WL_CONNECTED) {
+      ledWifiState = true;
+    } else {
+      // Blink when disconnected (twice per second)
+      ledWifiState = (currentMillis / 500) % 2;
+    }
+    digitalWrite(LED_WIFI, ledWifiState);
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+/**
+ * Task for monitoring battery status
+ */
+void batteryTask(void *parameter) {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(5000); // Check every 5 seconds
+  
+  while (1) {
+    if (xSemaphoreTake(batteryMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      batteryVoltage = getBatteryVoltage();
+      
+      // Print battery status
+      Serial.print("Battery Voltage: ");
+      Serial.print(batteryVoltage, 2);
+      Serial.print("V (");
+      if (batteryVoltage <= BATTERY_CRITICAL_THRESHOLD) {
+        Serial.println("CRITICAL)");
+      } else if (batteryVoltage <= BATTERY_LOW_THRESHOLD) {
+        Serial.println("LOW)");
+      } else {
+        Serial.println("GOOD)");
+      }
+      
+      xSemaphoreGive(batteryMutex);
+    }
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+/**
+ * Task for reading potentiometer and updating sensitivity
+ */
+void potentiometerTask(void *parameter) {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(100); // 10Hz update rate
+  
+  while (1) {
+    // Read potentiometer (0-4095)
+    int newPotValue = analogRead(POTENTIOMETER_PIN);
+    
+    // Only update if significant change detected
+    if (abs(newPotValue - potValue) > 10) {
+      potValue = newPotValue;
+      
+      // Map pot value to ECG sensitivity parameters
+      // 1. Prominence/threshold (lower value = more sensitive)
+      prominence = map(potValue, 0, 4095, MIN_PROMINENCE * 1000, MAX_PROMINENCE * 1000) / 1000.0;
+      
+      // 2. Min distance between peaks (lower value = detect faster heart rates)
+      minPeakDistance = map(potValue, 0, 4095, MIN_DISTANCE_MS, MAX_DISTANCE_MS);
+      
+      // Report changes less frequently to avoid flooding serial monitor
+      if (millis() - lastPotReport > 1000) {
+        lastPotReport = millis();
+        
+        Serial.println("\n--- SENSITIVITY UPDATED ---");
+        Serial.print("Pot Value: ");
+        Serial.print(potValue);
+        Serial.print("/4095 (");
+        Serial.print(map(potValue, 0, 4095, 0, 100));
+        Serial.println("%)");
+        Serial.print("Prominence: ");
+        Serial.print(prominence, 3);
+        Serial.print(" | Min Distance: ");
+        Serial.print(minPeakDistance);
+        Serial.println("ms");
+        
+        // Visual bar to represent sensitivity level
+        Serial.print("Sensitivity: [");
+        int barLength = map(4095 - potValue, 0, 4095, 0, 20); // Inverted for sensitivity
+        for (int i = 0; i < 20; i++) {
+          Serial.print(i < barLength ? "#" : "-");
+        }
+        Serial.println("]");
+        Serial.println("------------------------");
+      }
+    }
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+/**
+ * Task for sending data to Firebase
+ */
+void firebaseTask(void *parameter) {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(1000); // Send every 1 second
+  
+  while (1) {
+    // Try to receive the latest BPM data
+    BpmData_t bpmData;
+    if (xQueuePeek(bpmDataQueue, &bpmData, 0) == pdTRUE) {
+      // Try to receive the latest ECG data
+      EcgData_t ecgData;
+      if (xQueueReceive(ecgDataQueue, &ecgData, 0) == pdTRUE) {
+        // Only send if we have a valid fetal BPM
+        if (bpmData.fetalBpm > 0 && millis() - bpmData.timestamp < 5000) {
+          sendToFirebase(ecgData.rawEcg, ecgData.filteredEcg, ecgData.filteredEcg);
+        }
+      }
+    }
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+/**
+ * Task for displaying information on Serial
+ */
+void displayTask(void *parameter) {
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(1000); // Update every second
+  
+  while (1) {
+    // Print detailed information to Serial Monitor
+    Serial.println("\n--- Device Status ---");
+    
+    // Battery Status
+    if (xSemaphoreTake(batteryMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      Serial.print("Battery: ");
+      Serial.print(batteryVoltage, 2);
+      Serial.print("V (");
+      if (batteryVoltage <= BATTERY_CRITICAL_THRESHOLD) {
+        Serial.println("CRITICAL)");
+      } else if (batteryVoltage <= BATTERY_LOW_THRESHOLD) {
+        Serial.println("LOW)");
+      } else {
+        Serial.println("GOOD)");
+      }
+      xSemaphoreGive(batteryMutex);
+    }
+    
+    // WiFi Status
+    Serial.print("WiFi: ");
+    Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+    
+    // ECG Status
+    if (xSemaphoreTake(bpmMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      Serial.print("Fetal BPM: ");
+      if (fetalBpm > 0 && millis() - lastFetalPeak < 5000) {
+        Serial.print(fetalBpm);
+        Serial.println(" ❤");
+      } else {
+        Serial.println("--");
+      }
+      xSemaphoreGive(bpmMutex);
+    }
+    
+    Serial.print("Potentiometer: ");
+    Serial.print(potValue);
+    Serial.print("/4095 (");
+    Serial.print(map(potValue, 0, 4095, 0, 100));
+    Serial.println("%)");
+    
+    Serial.print("Signal Quality: ");
+    if (pt_peak > 0) {
+      float signalQuality = (pt_peak - pt_npk) / pt_peak * 100;
+      Serial.print(signalQuality, 1);
+      Serial.println("%");
+    } else {
+      Serial.println("--");
+    }
+    
+    Serial.println("-------------------");
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
 
@@ -158,16 +501,17 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   
-  // Initialize WiFi
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nConnected to WiFi");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("\n==== ECG BPM Test with FreeRTOS ====");
+  Serial.println("Initializing device...");
+  
+  // Create mutex for protecting shared data
+  ecgMutex = xSemaphoreCreateMutex();
+  bpmMutex = xSemaphoreCreateMutex();
+  batteryMutex = xSemaphoreCreateMutex();
+  
+  // Create queues for data exchange between tasks
+  ecgDataQueue = xQueueCreate(10, sizeof(EcgData_t));
+  bpmDataQueue = xQueueCreate(1, sizeof(BpmData_t)); // Only need latest BPM value
   
   // Initialize pins
   pinMode(AD8232_OUTPUT, INPUT);
@@ -196,46 +540,100 @@ void setup() {
     delay(200);
   }
   
-  // Print header
-  Serial.println("\n==== Potentiometer + ECG BPM Test ====");
-  Serial.println("Turn potentiometer to adjust sensitivity");
-  Serial.println("- Clockwise: Less sensitive (higher threshold)");
-  Serial.println("- Counter-clockwise: More sensitive (lower threshold)");
+  // Initialize WiFi
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi");
+  
+  // Wait for WiFi with timeout to avoid blocking setup
+  int wifiTimeout = 0;
+  while (WiFi.status() != WL_CONNECTED && wifiTimeout < 20) {
+    delay(500);
+    Serial.print(".");
+    wifiTimeout++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnected to WiFi");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nFailed to connect to WiFi. Will retry in background.");
+  }
+  
+  // Initial battery reading
+  batteryVoltage = getBatteryVoltage();
+  Serial.print("Initial battery level: ");
+  Serial.print(batteryVoltage);
+  Serial.println("V");
+  
+  // Create tasks
+  xTaskCreatePinnedToCore(
+    ecgTask,               // Function that implements the task
+    "ECG_Task",            // Name of the task
+    STACK_SIZE,            // Stack size in words
+    NULL,                  // Parameter passed to the task
+    ECG_TASK_PRIORITY,     // Priority at which the task is created
+    &ecgTaskHandle,        // Task handle
+    1                      // Core where the task should run (Core 1 - Application Core)
+  );
+  
+  xTaskCreatePinnedToCore(
+    ledTask,               // Function that implements the task
+    "LED_Task",            // Name of the task
+    2048,                  // Stack size in words
+    NULL,                  // Parameter passed to the task
+    LED_TASK_PRIORITY,     // Priority at which the task is created
+    &ledTaskHandle,        // Task handle
+    1                      // Core where the task should run (Core 1)
+  );
+  
+  xTaskCreatePinnedToCore(
+    batteryTask,           // Function that implements the task
+    "Battery_Task",        // Name of the task
+    2048,                  // Stack size in words
+    NULL,                  // Parameter passed to the task
+    BATTERY_TASK_PRIORITY, // Priority at which the task is created
+    &batteryTaskHandle,    // Task handle
+    0                      // Core where the task should run (Core 0 - Protocol Core)
+  );
+  
+  xTaskCreatePinnedToCore(
+    potentiometerTask,     // Function that implements the task
+    "Potentiometer_Task",  // Name of the task
+    2048,                  // Stack size in words
+    NULL,                  // Parameter passed to the task
+    POTENTIOMETER_TASK_PRIORITY, // Priority at which the task is created
+    &potentiometerTaskHandle, // Task handle
+    0                      // Core where the task should run (Core 0)
+  );
+  
+  xTaskCreatePinnedToCore(
+    firebaseTask,          // Function that implements the task
+    "Firebase_Task",       // Name of the task
+    STACK_SIZE,            // Stack size in words - larger for HTTP operations
+    NULL,                  // Parameter passed to the task
+    FIREBASE_TASK_PRIORITY, // Priority at which the task is created
+    &firebaseTaskHandle,   // Task handle
+    0                      // Core where the task should run (Core 0)
+  );
+  
+  xTaskCreatePinnedToCore(
+    displayTask,           // Function that implements the task
+    "Display_Task",        // Name of the task
+    2048,                  // Stack size in words
+    NULL,                  // Parameter passed to the task
+    1,                     // Priority at which the task is created
+    NULL,                  // Task handle (not needed to store)
+    0                      // Core where the task should run (Core 0)
+  );
+  
+  Serial.println("All tasks created successfully");
   Serial.println("====================================");
 }
 
 void loop() {
-  // Check battery status first
-  checkBatteryStatus();
-  
-  // Check for leads-off condition
-  bool leadsOff = checkLeadsOff();
-  
-  // Update all LEDs
-  updateLeds();
-  
-  // Only process ECG if leads are connected and battery is not critical
-  if (!leadsOff && batteryVoltage > BATTERY_CRITICAL_THRESHOLD) {
-    // Read potentiometer and update sensitivity parameters
-    updateSensitivityFromPot();
-    
-    // Read and filter ECG signal
-    int rawEcg = analogRead(AD8232_OUTPUT);
-    float filteredEcg = filterEcg(rawEcg);
-    
-    // Detect peaks and calculate BPM
-    detectPeaksAndCalculateBpm(filteredEcg);
-    
-    // Display information periodically
-    displayInfo(rawEcg, filteredEcg);
-  }
-  
-  // Maintain consistent sampling rate
-  static unsigned long lastSampleTime = 0;
-  unsigned long processingTime = millis() - lastSampleTime;
-  int delayTime = max(1, (int)(5 - processingTime)); // Aim for ~200Hz sampling
-  delay(delayTime);
-  lastSampleTime = millis();
+  // Nothing to do here - all functionality is handled by RTOS tasks
+  vTaskDelay(pdMS_TO_TICKS(1000)); // Prevent watchdog timer issues
 }
 
 /**
