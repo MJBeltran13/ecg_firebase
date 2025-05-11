@@ -26,9 +26,9 @@
 
 // Battery monitoring constants
 #define BATTERY_CHECK_INTERVAL 5000  // Check battery every 5 seconds
-#define BATTERY_LOW_THRESHOLD 3.3    // Low battery threshold voltage
-#define BATTERY_CRITICAL_THRESHOLD 3.0 // Critical battery threshold voltage
-#define VOLTAGE_DIVIDER_RATIO 2.0    // Voltage divider ratio if used
+#define BATTERY_LOW_THRESHOLD 2.7    // Low battery threshold voltage
+#define BATTERY_CRITICAL_THRESHOLD 2.4 // Critical battery threshold voltage
+#define VOLTAGE_DIVIDER_RATIO 0.4125    // Voltage divider ratio if used
 
 // ECG processing constants
 const int SAMPLING_RATE = 200;  // Hz - Typical ECG sampling rate
@@ -105,10 +105,15 @@ float pt_npk = 0;          // Noise peak level
 int pt_rr_missed = 0;      // Counter for missed beats
 
 // Firebase configuration
-#define FIREBASE_URL "https://your-firebase-url.firebaseio.com"  // Replace with your Firebase URL
-#define FIREBASE_AUTH ""  // Replace with your Firebase auth token if needed
-#define WIFI_SSID "your-wifi-ssid"  // Replace with your WiFi SSID
-#define WIFI_PASSWORD "your-wifi-password"  // Replace with your WiFi password
+#define FIREBASE_URL "https://ecgdata-f042a-default-rtdb.asia-southeast1.firebasedatabase.app/ecg_readings.json"
+#define FIREBASE_AUTH "AIzaSyA0OGrnWnNx0LDPGzDZHdrzajiRGEjr3AM"
+#define WIFI_SSID "PLDTHOMEFIBRgky9c"
+#define WIFI_PASSWORD "PLDTWIFIry2fp"
+
+// NTP time setup
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 0;
+const int daylightOffset_sec = 0;
 
 // Device identification
 String deviceId = "ESP32_" + String((uint32_t)ESP.getEfuseMac(), HEX);
@@ -165,9 +170,16 @@ void setup() {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nConnected to WiFi");
+  Serial.println("\n✅ Connected to Wi-Fi");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
+  
+  // Sync time for timestamps
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("❌ Failed to get time");
+  }
   
   // Initialize pins
   pinMode(AD8232_OUTPUT, INPUT);
@@ -659,16 +671,11 @@ void reconnectWiFi() {
 
 String getISOTimestamp() {
   // Get current time from NTP server
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    Serial.println("Failed to obtain time");
-    return "1970-01-01T00:00:00Z";
-  }
-  
-  char timeStringBuff[50];
-  strftime(timeStringBuff, sizeof(timeStringBuff), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
-  return String(timeStringBuff);
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  char timestamp[30];
+  strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", timeinfo);
+  return String(timestamp);
 }
 
 bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
@@ -683,6 +690,7 @@ bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
     return false;
   }
 
+  // Get timestamp
   String timestamp = getISOTimestamp();
 
   // Construct JSON
@@ -694,26 +702,20 @@ bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
   json += "\"smoothedEcg\":" + String(fetalFiltered);
   json += "}";
 
-  String firebasePath = String(FIREBASE_URL) + "/readings.json";
-  if (String(FIREBASE_AUTH).length() > 0) {
-    firebasePath += "?auth=" + String(FIREBASE_AUTH);
-  }
-
   HTTPClient http;
-  http.begin(firebasePath);
+  http.begin(FIREBASE_URL + "?auth=" + FIREBASE_AUTH); // Add auth token to URL
   http.addHeader("Content-Type", "application/json");
 
   int httpResponseCode = http.PUT(json);
 
-  if (httpResponseCode >= 200 && httpResponseCode < 300) {
-    Serial.println("✅ Data sent to Firebase successfully!");
-    Serial.println("BPM: " + String(fetalBpm));
+  if (httpResponseCode > 0) {
+    Serial.println("✅ Data sent: " + json);
+    Serial.println("Response: " + http.getString());
     http.end();
     return true;
   } else {
-    Serial.print("❌ Firebase error: ");
+    Serial.print("❌ Error sending data: ");
     Serial.println(httpResponseCode);
-    Serial.println("Response: " + http.getString());
     http.end();
     return false;
   }
