@@ -679,11 +679,6 @@ String getISOTimestamp() {
 }
 
 bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
-  // Don't send if fetalBpm is 0
-  if (fetalBpm == 0) {
-    return false;
-  }
-
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("❌ Wi-Fi disconnected. Trying to reconnect...");
     reconnectWiFi();
