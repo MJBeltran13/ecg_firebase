@@ -1,4 +1,4 @@
-package com.roblestyle.ecgmonitor
+package com.yakap.ecgmonitor
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

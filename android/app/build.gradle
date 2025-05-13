@@ -86,9 +86,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.roblestyle.ecgmonitor'
+    namespace 'com.yakap.ecgmonitor'
     defaultConfig {
-        applicationId 'com.roblestyle.ecgmonitor'
+        applicationId 'com.yakap.ecgmonitor'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

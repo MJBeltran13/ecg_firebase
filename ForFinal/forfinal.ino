@@ -16,7 +16,6 @@
 
 // Pin definitions
 #define AD8232_OUTPUT 35    // Analog pin connected to AD8232 output
-#define POTENTIOMETER_PIN 14 // Potentiometer for calibration
 #define LED_FETAL 25        // LED for fetal heartbeat
 #define LED_WORKING 26      // Green LED for device operation
 #define LED_WIFI 27         // Yellow LED for WiFi status
@@ -28,7 +27,7 @@
 #define BATTERY_CHECK_INTERVAL 5000  // Check battery every 5 seconds
 #define BATTERY_LOW_THRESHOLD 2.7    // Low battery threshold voltage
 #define BATTERY_CRITICAL_THRESHOLD 2.4 // Critical battery threshold voltage
-#define VOLTAGE_DIVIDER_RATIO 0.4125    // Voltage divider ratio if used
+#define VOLTAGE_DIVIDER_RATIO 0.32    // Voltage divider ratio if used
 
 // ECG processing constants
 const int SAMPLING_RATE = 200;  // Hz - Typical ECG sampling rate
@@ -52,9 +51,8 @@ const int MAX_FETAL_BPM = 220;     // Maximum fetal heart rate
 
 // Variables for potentiometer and sensitivity control
 int potValue = 5;            // Fixed potentiometer value
-float prominence = 0.02;     // Threshold for peak detection (adjusted by pot)
-int minPeakDistance = 300;   // Minimum time between peaks (adjusted by pot)
-unsigned long lastPotReport = 0;
+float prominence = 0.02;     // Threshold for peak detection
+int minPeakDistance = 300;   // Minimum time between peaks
 
 // BPM detection variables 
 float maxValue = 0;            // Maximum signal value for adaptive thresholding
@@ -107,8 +105,8 @@ int pt_rr_missed = 0;      // Counter for missed beats
 // Firebase configuration
 #define FIREBASE_URL "https://ecgdata-f042a-default-rtdb.asia-southeast1.firebasedatabase.app/ecg_readings.json"
 #define FIREBASE_AUTH "AIzaSyA0OGrnWnNx0LDPGzDZHdrzajiRGEjr3AM"
-#define WIFI_SSID "PLDTHOMEFIBRgky9c"
-#define WIFI_PASSWORD "PLDTWIFIry2fp"
+#define WIFI_SSID "BatStateU-DevOps"  // Replace with your WiFi SSID
+#define WIFI_PASSWORD "Dev3l$06"  // Replace with your WiFi password
 
 // NTP time setup
 const char* ntpServer = "pool.ntp.org";
@@ -130,9 +128,9 @@ unsigned long lastLedUpdate = 0;
 
 // Add this function before setup()
 float getBatteryVoltage() {
-  // Read raw value and convert to voltage
   int rawValue = analogRead(BATTERY_PIN);
-  // ESP32 ADC reference voltage is 3.3V and resolution is 12-bit (0-4095)
+  Serial.print("Raw ADC Value: ");
+  Serial.println(rawValue);
   float voltage = (rawValue * 3.3 / 4095.0) * VOLTAGE_DIVIDER_RATIO;
   return voltage;
 }
@@ -183,7 +181,6 @@ void setup() {
   
   // Initialize pins
   pinMode(AD8232_OUTPUT, INPUT);
-  pinMode(POTENTIOMETER_PIN, INPUT);
   pinMode(LED_FETAL, OUTPUT);
   pinMode(LED_WORKING, OUTPUT);
   pinMode(LED_WIFI, OUTPUT);
@@ -209,11 +206,11 @@ void setup() {
   }
   
   // Print header
-  Serial.println("\n==== Potentiometer + ECG BPM Test ====");
-  Serial.println("Turn potentiometer to adjust sensitivity");
-  Serial.println("- Clockwise: Less sensitive (higher threshold)");
-  Serial.println("- Counter-clockwise: More sensitive (lower threshold)");
+  Serial.println("\n==== ECG BPM Monitoring ====");
   Serial.println("====================================");
+  
+  // Initialize sensitivity settings once at startup
+  updateSensitivityFromPot();
 }
 
 void loop() {
@@ -228,9 +225,6 @@ void loop() {
   
   // Only process ECG if leads are connected and battery is not critical
   if (!leadsOff && batteryVoltage > BATTERY_CRITICAL_THRESHOLD) {
-    // Read potentiometer and update sensitivity parameters
-    updateSensitivityFromPot();
-    
     // Read and filter ECG signal
     int rawEcg = analogRead(AD8232_OUTPUT);
     float filteredEcg = filterEcg(rawEcg);
@@ -292,56 +286,17 @@ bool checkLeadsOff() {
 }
 
 /**
- * Read potentiometer and update sensitivity parameters
+ * Set fixed sensitivity parameters from potentiometer value
  */
 void updateSensitivityFromPot() {
-  // Read potentiometer (0-4095)
-  int newPotValue = analogRead(POTENTIOMETER_PIN);
+  // Fixed pot value is already set at initialization (potValue = 5)
   
-  // Only update if significant change detected
-  if (abs(newPotValue - potValue) > 10) {
-    potValue = newPotValue;
-    
-    // Map pot value to ECG sensitivity parameters
-    // 1. Prominence/threshold (lower value = more sensitive)
-    prominence = map(potValue, 0, 4095, MIN_PROMINENCE * 1000, MAX_PROMINENCE * 1000) / 1000.0;
-    
-    // 2. Min distance between peaks (lower value = detect faster heart rates)
-    minPeakDistance = map(potValue, 0, 4095, MIN_DISTANCE_MS, MAX_DISTANCE_MS);
-    
-    // Report changes less frequently to avoid flooding serial monitor
-    if (millis() - lastPotReport > 1000) {
-      lastPotReport = millis();
-      
-      Serial.println("\n--- SENSITIVITY UPDATED ---");
-      Serial.print("Pot Value: ");
-      Serial.print(potValue);
-      Serial.print("/4095 (");
-      Serial.print(map(potValue, 0, 4095, 0, 100));
-      Serial.println("%)");
-      Serial.print("Prominence: ");
-      Serial.print(prominence, 3);
-      Serial.print(" | Min Distance: ");
-      Serial.print(minPeakDistance);
-      Serial.println("ms");
-      
-      // Visual bar to represent sensitivity level
-      Serial.print("Sensitivity: [");
-      int barLength = map(4095 - potValue, 0, 4095, 0, 20); // Inverted for sensitivity
-      for (int i = 0; i < 20; i++) {
-        Serial.print(i < barLength ? "#" : "-");
-      }
-      Serial.println("]");
-      Serial.println("------------------------");
-      
-      // Flash LEDs to indicate sensitivity change
-      digitalWrite(LED_FETAL, HIGH);
-      digitalWrite(LED_WORKING, HIGH);
-      delay(30);
-      digitalWrite(LED_FETAL, LOW);
-      digitalWrite(LED_WORKING, LOW);
-    }
-  }
+  // Map pot value to ECG sensitivity parameters
+  // 1. Prominence/threshold (lower value = more sensitive)
+  prominence = map(potValue, 0, 4095, MIN_PROMINENCE * 1000, MAX_PROMINENCE * 1000) / 1000.0;
+  
+  // 2. Min distance between peaks (lower value = detect faster heart rates)
+  minPeakDistance = map(potValue, 0, 4095, MIN_DISTANCE_MS, MAX_DISTANCE_MS);
 }
 
 /**
@@ -576,7 +531,7 @@ void displayInfo(int rawEcg, float filteredEcg) {
   Serial.print(filteredEcg);
   Serial.print(",");
   
-  // Output potentiometer value (0-4095)
+  // Output fixed value where potentiometer reading used to be (for consistency)
   Serial.print(potValue);
   Serial.print(",");
   
@@ -616,21 +571,6 @@ void displayInfo(int rawEcg, float filteredEcg) {
     if (fetalBpm > 0 && millis() - lastFetalPeak < 5000) {
       Serial.print(fetalBpm);
       Serial.println(" ❤");
-    } else {
-      Serial.println("--");
-    }
-    
-    Serial.print("Potentiometer: ");
-    Serial.print(potValue);
-    Serial.print("/4095 (");
-    Serial.print(map(potValue, 0, 4095, 0, 100));
-    Serial.println("%)");
-    
-    Serial.print("Signal Quality: ");
-    if (pt_peak > 0) {
-      float signalQuality = (pt_peak - pt_npk) / pt_peak * 100;
-      Serial.print(signalQuality, 1);
-      Serial.println("%");
     } else {
       Serial.println("--");
     }
@@ -698,7 +638,9 @@ bool sendToFirebase(int rawEcg, float fetalFiltered, float maternalFiltered) {
   json += "}";
 
   HTTPClient http;
-  http.begin(FIREBASE_URL + "?auth=" + FIREBASE_AUTH); // Add auth token to URL
+  // Convert C-style string literals to String objects before concatenation
+  String url = String(FIREBASE_URL) + "?auth=" + String(FIREBASE_AUTH);
+  http.begin(url); // Use the String object
   http.addHeader("Content-Type", "application/json");
 
   int httpResponseCode = http.PUT(json);

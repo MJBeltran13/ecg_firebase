@@ -1,4 +1,4 @@
-package com.roblestyle.ecgmonitor
+package com.yakap.ecgmonitor
 
 import android.app.Application
 import android.content.res.Configuration

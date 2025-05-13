@@ -35,7 +35,8 @@
       "favicon": "./assets/images/logo2.jpg"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-updates"
     ],
     "experiments": {
       "typedRoutes": true
@@ -45,8 +46,17 @@
         "origin": false
       },
       "eas": {
-        "projectId": "70b07159-0b9a-437b-8b6d-a0ad7923ef4b"
+        "projectId": "bea1e311-496a-4913-bb4d-8d6db7dd83a6"
       }
+    },
+    "owner": "mjb123test",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/bea1e311-496a-4913-bb4d-8d6db7dd83a6"
     }
   }
 }

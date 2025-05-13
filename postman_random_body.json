@@ -1,0 +1,7 @@
+{
+    "deviceId": "postman_test",
+    "bpm": "{{$randomInt 100 160}}",
+    "timestamp": "{{$isoTimestamp}}",
+    "rawEcg": "{{$randomInt 1800 2400}}",
+    "smoothedEcg": "{{$randomInt 1900 2200}}"
+} 

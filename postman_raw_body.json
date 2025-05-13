@@ -1,0 +1,7 @@
+{
+    "deviceId": "esp32",
+    "bpm": 120,
+    "timestamp": "2023-05-13T14:35:22",
+    "rawEcg": 2048,
+    "smoothedEcg": 2150
+} 
