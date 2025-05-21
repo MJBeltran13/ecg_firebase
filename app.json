@@ -4,11 +4,11 @@
     "slug": "ecg-firebase",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo2.jpg",
+    "icon": "./assets/images/logo2.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/images/logo2.jpg",
+      "image": "./assets/images/logo2.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -21,7 +21,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/logo2.jpg",
+        "foregroundImage": "./assets/images/logo2.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.yakap.ecgmonitor",
@@ -32,7 +32,7 @@
     },
     "web": {
       "bundler": "metro",
-      "favicon": "./assets/images/logo2.jpg"
+      "favicon": "./assets/images/logo2.png"
     },
     "plugins": [
       "expo-router"

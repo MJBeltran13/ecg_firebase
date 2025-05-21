@@ -1,11 +1,23 @@
 import { StyleSheet } from 'react-native';
 import { ThemedView } from '@/components/ThemedView';
 import SimpleDashboard from '@/components/SimpleDashboard';
+import PatientInfoScreen from '@/components/PatientInfoScreen';
+import { useState } from 'react';
 
 export default function HomeScreen() {
+  const [showDashboard, setShowDashboard] = useState(false);
+
+  const handleStartRecording = () => {
+    setShowDashboard(true);
+  };
+
   return (
     <ThemedView style={styles.container}>
-      <SimpleDashboard />
+      {showDashboard ? (
+        <SimpleDashboard />
+      ) : (
+        <PatientInfoScreen onStartRecording={handleStartRecording} />
+      )}
     </ThemedView>
   );
 }

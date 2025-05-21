@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, Dimensions, ScrollView, SafeAreaView, StatusBar, Platform, Image, TouchableOpacity } from 'react-native';
-import { subscribeToLatestEcgData, EcgReading } from '../constants/EcgData';
 import { FontAwesome } from '@expo/vector-icons';
+import { subscribeToLatestEcgData } from '../constants/EcgData';
+import { addEcgReading, endEcgSession, getCurrentPatientInfo, PatientInfo, EcgReading } from '../constants/LocalStorage';
 
 const CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection status
 
@@ -13,6 +14,16 @@ const SimpleDashboard: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now());
   const [connectionAttempts, setConnectionAttempts] = useState(0);
+  const [patientInfo, setPatientInfo] = useState<PatientInfo | null>(null);
+
+  // Load patient info
+  useEffect(() => {
+    const loadPatientInfo = async () => {
+      const info = await getCurrentPatientInfo();
+      setPatientInfo(info);
+    };
+    loadPatientInfo();
+  }, []);
 
   // Time formatting function
   const formatTime = (date: Date): string => {
@@ -26,7 +37,6 @@ const SimpleDashboard: React.FC = () => {
     
     if (timeSinceLastUpdate > CONNECTION_TIMEOUT) {
       setIsConnected(false);
-      // Increment connection attempts when disconnected
       setConnectionAttempts(prev => prev + 1);
     }
   }, [lastUpdateTime]);
@@ -34,11 +44,7 @@ const SimpleDashboard: React.FC = () => {
   // Monitor data updates and connection status
   useEffect(() => {
     let connectionCheckInterval: NodeJS.Timeout;
-
-    // Start checking connection status
     connectionCheckInterval = setInterval(checkConnectionStatus, 1000);
-
-    // Cleanup interval on unmount
     return () => {
       clearInterval(connectionCheckInterval);
     };
@@ -55,7 +61,7 @@ const SimpleDashboard: React.FC = () => {
     };
   }, []);
 
-  // Subscribe to ECG data with enhanced error handling
+  // Subscribe to ECG data from Firebase
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
     
@@ -66,13 +72,12 @@ const SimpleDashboard: React.FC = () => {
             setLatestReading(data);
             setLastUpdateTime(Date.now());
             setIsConnected(true);
-            setConnectionAttempts(0); // Reset attempts on successful connection
+            setConnectionAttempts(0);
             
-            // Add timestamp for x-axis
             const currentTime = new Date();
             const timeString = formatTime(currentTime);
             
-            // Update histories atomically
+            // Update histories
             setBpmHistory(prev => {
               const newHistory = [...prev, data.bpm];
               return newHistory.slice(-10);
@@ -87,6 +92,9 @@ const SimpleDashboard: React.FC = () => {
               const newLabels = [...prev, timeString];
               return newLabels.slice(-10);
             });
+
+            // Save reading to local storage
+            addEcgReading(data).catch(console.error);
           }
         });
       } catch (error) {
@@ -97,11 +105,12 @@ const SimpleDashboard: React.FC = () => {
 
     setupSubscription();
 
-    // Cleanup subscription
     return () => {
       if (unsubscribe) {
         unsubscribe();
       }
+      // End the session when component unmounts
+      endEcgSession().catch(console.error);
     };
   }, []);
 
@@ -113,7 +122,7 @@ const SimpleDashboard: React.FC = () => {
     setLatestReading(null);
     setIsConnected(false);
     setConnectionAttempts(0);
-    setLastUpdateTime(Date.now()); // Reset the last update time
+    setLastUpdateTime(Date.now());
   }, []);
 
   // Get connection status text
@@ -358,6 +367,29 @@ const SimpleDashboard: React.FC = () => {
             </TouchableOpacity>
           </View>
         </View>
+        
+        {/* Patient Info Card */}
+        {patientInfo && (
+          <View style={[styles.card, styles.patientCard]}>
+            <Text style={styles.patientCardTitle}>Patient Information</Text>
+            <View style={styles.patientInfo}>
+              <Text style={styles.patientLabel}>Name:</Text>
+              <Text style={styles.patientValue}>{patientInfo.name}</Text>
+            </View>
+            <View style={styles.patientInfo}>
+              <Text style={styles.patientLabel}>Months Pregnant:</Text>
+              <Text style={styles.patientValue}>{patientInfo.monthsPregnant} months</Text>
+            </View>
+            <View style={styles.patientInfo}>
+              <Text style={styles.patientLabel}>Recording Date:</Text>
+              <Text style={styles.patientValue}>{patientInfo.recordingDate}</Text>
+            </View>
+            <View style={styles.patientInfo}>
+              <Text style={styles.patientLabel}>Recording Time:</Text>
+              <Text style={styles.patientValue}>{patientInfo.recordingTime}</Text>
+            </View>
+          </View>
+        )}
         
         {/* BPM and Device Status Cards */}
         <View style={styles.cardsRow}>
@@ -764,6 +796,32 @@ const styles = StyleSheet.create({
   },
   statusTextNoSignal: {
     color: '#F44336',
+  },
+  patientCard: {
+    marginBottom: 16,
+    backgroundColor: '#fff',
+  },
+  patientCardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#263238',
+    marginBottom: 12,
+  },
+  patientInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  patientLabel: {
+    fontSize: 14,
+    color: '#546E7A',
+  },
+  patientValue: {
+    fontSize: 14,
+    color: '#263238',
+    fontWeight: '500',
   },
 });
 
