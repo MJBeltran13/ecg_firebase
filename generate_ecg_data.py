@@ -8,22 +8,22 @@ FIREBASE_URL = "https://ecgdata-f042a-default-rtdb.asia-southeast1.firebasedatab
 AUTH_TOKEN = "AIzaSyA0OGrnWnNx0LDPGzDZHdrzajiRGEjr3AM"
 
 def generate_ecg_data():
-    # Generate random BPM between 130-140
-    bpm = random.uniform(130, 140)
+    # Generate random BPM between 130-140 as integer
+    bpm = random.randint(130, 140)
     
-    # Generate simulated ECG values
-    raw_ecg = random.uniform(10, 100)  # Random raw ECG value
-    smoothed_ecg = raw_ecg + random.uniform(-5, 5)  # Smoothed version with some variation
+    # Generate simulated ECG values as integers
+    raw_ecg = random.randint(90, 100)  # Random raw ECG value
+    smoothed_ecg = raw_ecg + random.randint(-5, 5)  # Smoothed version with some variation
     
     # Current timestamp in ISO format
     timestamp = datetime.now().isoformat()
     
     data = {
         "deviceId": "esp32",
-        "bpm": round(bpm, 2),
+        "bpm": bpm,
         "timestamp": timestamp,
-        "rawEcg": round(raw_ecg, 2),
-        "smoothedEcg": round(smoothed_ecg, 2)
+        "rawEcg": raw_ecg,
+        "smoothedEcg": smoothed_ecg
     }
     
     return data

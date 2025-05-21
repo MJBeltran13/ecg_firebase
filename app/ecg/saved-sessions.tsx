@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { getAllEcgSessions, EcgSession, clearAllEcgSessions, deleteEcgSession } from '../../constants/LocalStorage';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 
 const SavedSessionsScreen: React.FC = () => {
@@ -18,32 +18,58 @@ const SavedSessionsScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
+  const isMounted = useRef(true);
+
+  // Set up the isMounted ref for cleanup
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
 
   const loadSessions = useCallback(async () => {
+    if (!isMounted.current) return;
+    
     try {
+      setLoading(true);
       console.log('Loading sessions...');
       const allSessions = await getAllEcgSessions();
       console.log('Loaded sessions:', allSessions.length);
-      setSessions(allSessions);
+      
+      if (isMounted.current) {
+        setSessions(allSessions);
+      }
     } catch (error) {
       console.error('Error loading sessions:', error);
-      Alert.alert('Error', 'Failed to load saved sessions');
+      if (isMounted.current) {
+        Alert.alert('Error', 'Failed to load saved sessions');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMounted.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
+
+  // Focus effect to reload data when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      console.log('Screen focused, reloading sessions...');
+      loadSessions();
+    }, [loadSessions])
+  );
 
   useEffect(() => {
     loadSessions();
   }, [loadSessions]);
 
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    await loadSessions();
+    loadSessions();
   }, [loadSessions]);
 
-  const handleClearAllSessions = () => {
+  const handleClearAllSessions = useCallback(() => {
     Alert.alert(
       'Clear All Sessions',
       'Are you sure you want to delete all saved sessions? This action cannot be undone.',
@@ -54,16 +80,24 @@ const SavedSessionsScreen: React.FC = () => {
           style: 'destructive',
           onPress: async () => {
             try {
+              setLoading(true);
               await clearAllEcgSessions();
-              setSessions([]);
+              if (isMounted.current) {
+                setSessions([]);
+                setLoading(false);
+              }
             } catch (error) {
-              Alert.alert('Error', 'Failed to clear sessions');
+              console.error('Error clearing all sessions:', error);
+              if (isMounted.current) {
+                setLoading(false);
+                Alert.alert('Error', 'Failed to clear sessions');
+              }
             }
           },
         },
       ]
     );
-  };
+  }, []);
 
   const handleDeleteSession = useCallback((sessionStartTime: string) => {
     console.log('Delete button pressed for session:', sessionStartTime);
@@ -76,20 +110,32 @@ const SavedSessionsScreen: React.FC = () => {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            if (!isMounted.current) return;
             setLoading(true);
+            
             try {
               console.log('Attempting to delete session:', sessionStartTime);
               await deleteEcgSession(sessionStartTime);
-              console.log('Session deleted successfully, reloading sessions...');
-              setSessions(prevSessions => 
-                prevSessions.filter(session => session.startTime !== sessionStartTime)
-              );
-              await loadSessions();
+              console.log('Session deleted, reloading sessions...');
+              
+              if (isMounted.current) {
+                // First remove the session from the current list for immediate feedback
+                setSessions(prevSessions => 
+                  prevSessions.filter(session => session.startTime !== sessionStartTime)
+                );
+                
+                // Then reload all sessions to ensure consistency
+                await loadSessions();
+              }
             } catch (error) {
               console.error('Delete error:', error);
-              Alert.alert('Error', 'Failed to delete session');
+              if (isMounted.current) {
+                Alert.alert('Error', 'Failed to delete session');
+              }
             } finally {
-              setLoading(false);
+              if (isMounted.current) {
+                setLoading(false);
+              }
             }
           },
         },
@@ -145,7 +191,15 @@ const SavedSessionsScreen: React.FC = () => {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Saved Sessions</Text>
-        {sessions.length > 0}
+        {sessions.length > 0 && (
+          <TouchableOpacity 
+            onPress={handleClearAllSessions} 
+            style={styles.clearButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <FontAwesome name="trash" size={24} color="#ff3b30" />
+          </TouchableOpacity>
+        )}
       </View>
       {sessions.length === 0 ? (
         <View style={styles.emptyContainer}>
@@ -157,6 +211,7 @@ const SavedSessionsScreen: React.FC = () => {
           renderItem={renderSession}
           keyExtractor={(item) => item.startTime}
           contentContainerStyle={styles.listContainer}
+          extraData={sessions.length} // Force re-render when array length changes
           refreshControl={
             <RefreshControl 
               refreshing={refreshing} 
