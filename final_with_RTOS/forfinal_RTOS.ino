@@ -479,5 +479,74 @@ bool checkLeadsOff() {
     return (digitalRead(LO_PLUS) || digitalRead(LO_MINUS));
 }
 
-// Note: The filterEcg and panTompkinsQRS functions remain the same as in the original code
-// They are omitted here for brevity but should be included in the final implementation 
+// ECG Filtering and QRS Detection Functions
+float filterEcg(int rawEcg) {
+    // Simple moving average filter
+    ecgBuffer[bufferIndex] = (float)rawEcg;
+    bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
+    
+    float sum = 0;
+    for (int i = 0; i < BUFFER_SIZE; i++) {
+        sum += ecgBuffer[i];
+    }
+    
+    return sum / BUFFER_SIZE;
+}
+
+bool panTompkinsQRS(float input_data) {
+    // Static variables to maintain state between calls
+    static float lastInputs[5] = {0};
+    static float lastOutputs[5] = {0};
+    static float threshold = 0;
+    static float peak = 0;
+    static unsigned long lastPeakTime = 0;
+    static bool qrsDetected = false;
+    
+    // Shift values in the buffer
+    for (int i = 4; i > 0; i--) {
+        lastInputs[i] = lastInputs[i-1];
+        lastOutputs[i] = lastOutputs[i-1];
+    }
+    
+    // Store new input
+    lastInputs[0] = input_data;
+    
+    // Apply low-pass filter (5-point moving average)
+    float filtered = (lastInputs[0] + lastInputs[1] + lastInputs[2] + lastInputs[3] + lastInputs[4]) / 5.0;
+    
+    // Apply high-pass filter (derivative)
+    float derivative = filtered - lastOutputs[0];
+    
+    // Square the signal to emphasize QRS complex
+    float squared = derivative * derivative;
+    
+    // Integration window (3-point moving average)
+    float integrated = (squared + lastOutputs[0] + lastOutputs[1]) / 3.0;
+    
+    // Store output for next iteration
+    lastOutputs[0] = integrated;
+    
+    // Adaptive thresholding
+    if (integrated > peak) {
+        peak = integrated;
+    } else {
+        // Decay peak over time
+        peak = peak * 0.995;
+    }
+    
+    // Adjust threshold based on peak
+    threshold = prominence * peak;
+    
+    // QRS detection logic
+    unsigned long currentTime = millis();
+    unsigned long timeSinceLastPeak = currentTime - lastPeakTime;
+    
+    // Check if we have a new peak that exceeds threshold
+    if (integrated > threshold && timeSinceLastPeak > minPeakDistance) {
+        lastPeakTime = currentTime;
+        qrsDetected = true;
+        return true;
+    }
+    
+    return false;
+} 
