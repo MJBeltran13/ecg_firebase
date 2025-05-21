@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Dimensions, ScrollView, SafeAreaView, StatusBar, Platform, Image, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, ScrollView, SafeAreaView, StatusBar, Platform, Image, TouchableOpacity, Alert } from 'react-native';
 import { FontAwesome } from '@expo/vector-icons';
 import { subscribeToLatestEcgData } from '../constants/EcgData';
 import { addEcgReading, endEcgSession, getCurrentPatientInfo, PatientInfo, EcgReading } from '../constants/LocalStorage';
+import { useRouter } from 'expo-router';
 
 const CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection status
 
@@ -15,6 +16,7 @@ const SimpleDashboard: React.FC = () => {
   const [lastUpdateTime, setLastUpdateTime] = useState<number>(Date.now());
   const [connectionAttempts, setConnectionAttempts] = useState(0);
   const [patientInfo, setPatientInfo] = useState<PatientInfo | null>(null);
+  const router = useRouter();
 
   // Load patient info
   useEffect(() => {
@@ -358,13 +360,30 @@ const SimpleDashboard: React.FC = () => {
           />
           <View style={styles.headerContent}>
             <Text style={styles.dashboardTitle}>Yakap App</Text>
-            <TouchableOpacity 
-              style={styles.clearButton}
-              onPress={handleClearData}
-            >
-              <FontAwesome name="trash" size={16} color="#fff" />
-              <Text style={styles.clearButtonText}>Clear Data</Text>
-            </TouchableOpacity>
+            <View style={styles.headerButtons}>
+              <TouchableOpacity 
+                style={[styles.headerButton, styles.stopButton]}
+                onPress={async () => {
+                  try {
+                    await endEcgSession();
+                    router.push('/ecg/saved-sessions');
+                  } catch (error) {
+                    console.error('Error ending session:', error);
+                    Alert.alert('Error', 'Failed to end recording session');
+                  }
+                }}
+              >
+                <FontAwesome name="stop-circle" size={16} color="#fff" />
+                <Text style={styles.buttonText}>Stop</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.headerButton, styles.clearButton]}
+                onPress={handleClearData}
+              >
+                <FontAwesome name="trash" size={16} color="#fff" />
+                <Text style={styles.buttonText}>Clear</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
         
@@ -765,14 +784,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginLeft: 12,
   },
-  clearButton: {
+  headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#4D8FCF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
+    gap: 8,
+  },
+  headerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -782,10 +806,16 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
-  clearButtonText: {
+  stopButton: {
+    backgroundColor: '#dc3545',
+  },
+  clearButton: {
+    backgroundColor: '#4D8FCF',
+  },
+  buttonText: {
     color: '#fff',
-    marginLeft: 6,
-    fontSize: 14,
+    marginLeft: 4,
+    fontSize: 12,
     fontWeight: '600',
   },
   statusTextConnected: {
