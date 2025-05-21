@@ -149,4 +149,36 @@ export const clearAllEcgSessions = async (): Promise<void> => {
     console.error('Error clearing ECG sessions:', error);
     throw error;
   }
+};
+
+// Delete a specific ECG session
+export const deleteEcgSession = async (sessionStartTime: string): Promise<void> => {
+  try {
+    console.log('Starting deletion process for session:', sessionStartTime);
+    // First get all sessions to find the correct session ID
+    const keys = await AsyncStorage.getAllKeys();
+    console.log('All keys:', keys);
+    const sessionKeys = keys.filter(key => key.startsWith('session_'));
+    console.log('Session keys:', sessionKeys);
+    
+    // Find the session with matching startTime
+    for (const key of sessionKeys) {
+      const sessionString = await AsyncStorage.getItem(key);
+      if (sessionString) {
+        const session = JSON.parse(sessionString);
+        console.log('Checking session:', key, 'startTime:', session.startTime);
+        if (session.startTime === sessionStartTime) {
+          console.log('Found matching session, deleting key:', key);
+          await AsyncStorage.removeItem(key);
+          console.log('Session deleted successfully');
+          return;
+        }
+      }
+    }
+    console.log('No matching session found');
+    throw new Error('Session not found');
+  } catch (error) {
+    console.error('Error in deleteEcgSession:', error);
+    throw error;
+  }
 }; 

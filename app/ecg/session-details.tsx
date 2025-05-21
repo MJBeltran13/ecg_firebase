@@ -67,7 +67,7 @@ const SessionDetailsScreen: React.FC = () => {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Session Details</Text>
+        <Text style={styles.title}></Text>
       </View>
 
       <View style={styles.infoCard}>

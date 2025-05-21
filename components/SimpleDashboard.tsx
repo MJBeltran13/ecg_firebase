@@ -116,16 +116,27 @@ const SimpleDashboard: React.FC = () => {
     };
   }, []);
 
-  // Handle clearing data with connection reset
-  const handleClearData = useCallback(() => {
+  // Handle clearing display data
+  const handleClearDisplayData = useCallback(() => {
     setBpmHistory([]);
     setEcgHistory([]);
     setTimeLabels([]);
     setLatestReading(null);
-    setIsConnected(false);
-    setConnectionAttempts(0);
-    setLastUpdateTime(Date.now());
   }, []);
+
+  // Handle stopping the session
+  const handleStopSession = useCallback(async () => {
+    try {
+      await endEcgSession();
+      // Clear only the display data
+      handleClearDisplayData();
+      // Navigate to the patient info screen
+      router.replace('/');
+    } catch (error) {
+      console.error('Error ending session:', error);
+      Alert.alert('Error', 'Failed to end recording session');
+    }
+  }, [handleClearDisplayData, router]);
 
   // Get connection status text
   const getConnectionStatus = useCallback(() => {
@@ -363,22 +374,14 @@ const SimpleDashboard: React.FC = () => {
             <View style={styles.headerButtons}>
               <TouchableOpacity 
                 style={[styles.headerButton, styles.stopButton]}
-                onPress={async () => {
-                  try {
-                    await endEcgSession();
-                    router.push('/ecg/saved-sessions');
-                  } catch (error) {
-                    console.error('Error ending session:', error);
-                    Alert.alert('Error', 'Failed to end recording session');
-                  }
-                }}
+                onPress={handleStopSession}
               >
                 <FontAwesome name="stop-circle" size={16} color="#fff" />
                 <Text style={styles.buttonText}>Stop</Text>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={[styles.headerButton, styles.clearButton]}
-                onPress={handleClearData}
+                onPress={handleClearDisplayData}
               >
                 <FontAwesome name="trash" size={16} color="#fff" />
                 <Text style={styles.buttonText}>Clear</Text>

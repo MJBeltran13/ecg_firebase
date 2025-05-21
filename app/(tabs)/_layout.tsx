@@ -33,6 +33,7 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Monitor',
+          headerShown: false,
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
       />
@@ -40,6 +41,7 @@ export default function TabLayout() {
         name="saved-sessions"
         options={{
           title: 'Sessions',
+          headerShown: false,
           tabBarIcon: ({ color }) => <MaterialIcons name="save" size={28} color={color} />,
         }}
       />
@@ -47,6 +49,7 @@ export default function TabLayout() {
         name="explore"
         options={{
           title: 'How to Use',
+          headerShown: false,
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
         }}
       />
