@@ -16,10 +16,11 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#include <WiFiManager.h>
 
 // WiFi and Firebase Configuration
-const char* WIFI_SSID = "BatStateU-DevOps";  // Replace with your WiFi SSID
-const char* WIFI_PASSWORD = "Dev3l$06";  // Replace with your WiFi password
+// const char* WIFI_SSID = "BatStateU-DevOps";  // Replace with your WiFi SSID
+// const char* WIFI_PASSWORD = "Dev3l$06";  // Replace with your WiFi password
 const String FIREBASE_URL = "https://ecgdata-f042a-default-rtdb.asia-southeast1.firebasedatabase.app/ecg_readings.json";
 const String FIREBASE_AUTH = "AIzaSyA0OGrnWnNx0LDPGzDZHdrzajiRGEjr3AM";
 
@@ -131,6 +132,9 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   
+  // Connect to WiFi
+  setupWiFi();
+  
   // Configure ADC for ESP32-S
   analogSetWidth(12);  // Set ADC resolution to 12 bits
   analogSetPinAttenuation(BATTERY_PIN, ADC_11db);  // Set attenuation for 0-3.3V range
@@ -151,7 +155,7 @@ void setup() {
   }
   
   // Connect to WiFi
-  setupWiFi();
+ 
   
   // Configure time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
@@ -211,42 +215,52 @@ void loop() {
 }
 
 void setupWiFi() {
-  Serial.print("Connecting to WiFi");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // Initialize WiFiManager
+  WiFiManager wifiManager;
   
-  // Wait for connection with timeout
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
+  // Disable saving WiFi credentials
+  wifiManager.setConfigPortalTimeout(180);  // 3 minutes timeout for config portal
+  wifiManager.setSaveConfigCallback(nullptr);  // Remove config save callback
+  wifiManager.setBreakAfterConfig(true);  // Exit config portal after configuration
+  
+  // Optional: Add custom parameters if needed
+  // WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
+  // wifiManager.addParameter(&custom_mqtt_server);
+  
+  // Start config portal without trying to connect first
+  if (!wifiManager.startConfigPortal("ECG_Monitor_Setup")) {
+    Serial.println("Failed to connect or config portal timed out");
+    
+    // Reset and try again
+    ESP.restart();
+    delay(5000);
   }
   
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✅ Connected to WiFi");
-    Serial.print("IP Address: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\n❌ Failed to connect to WiFi");
-  }
+  // If you get here, you have connected to the WiFi
+  Serial.println("\n✅ Connected to WiFi");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 }
 
 void reconnectWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.print("Reconnecting to WiFi");
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-      delay(500);
-      Serial.print(".");
-      attempts++;
-    }
+    // Use WiFiManager to reconnect
+    WiFiManager wifiManager;
+    wifiManager.setConfigPortalTimeout(180);  // 3 minutes timeout
+    wifiManager.setBreakAfterConfig(true);
     
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\n✅ Reconnected to WiFi");
-    } else {
+    if (!wifiManager.startConfigPortal("ECG_Monitor_Reconnect")) {
       Serial.println("\n❌ Failed to reconnect to WiFi");
+      
+      // Reset and try again
+      ESP.restart();
+      delay(5000);
+    } else {
+      Serial.println("\n✅ Reconnected to WiFi");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
     }
   }
 }
