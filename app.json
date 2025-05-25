@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "ECG Monitor",
-    "slug": "ecg-firebase",
+    "slug": "yakapappecg",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo2.png",
@@ -45,8 +45,9 @@
         "origin": false
       },
       "eas": {
-        "projectId": "70b07159-0b9a-437b-8b6d-a0ad7923ef4b"
+        "projectId": "6568b748-f0e2-4265-b1d1-b15fe9478a07"
       }
-    }
+    },
+    "owner": "expmjbeltran13"
   }
 }
