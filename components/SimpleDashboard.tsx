@@ -5,7 +5,7 @@ import { subscribeToLatestEcgData } from '../constants/EcgData';
 import { addEcgReading, endEcgSession, getCurrentPatientInfo, PatientInfo, EcgReading } from '../constants/LocalStorage';
 import { useRouter } from 'expo-router';
 
-const CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection status
+const CONNECTION_TIMEOUT = 20000; // 20 seconds timeout for connection status
 
 const SimpleDashboard: React.FC = () => {
   const [latestReading, setLatestReading] = useState<EcgReading | null>(null);
@@ -143,7 +143,7 @@ const SimpleDashboard: React.FC = () => {
     if (isConnected) {
       return 'Connected';
     }
-    if (connectionAttempts > 3) {
+    if (connectionAttempts > 5) {
       return 'No Signal';
     }
     return 'Waiting';
