@@ -131,32 +131,31 @@ bool lastFirebaseSendStatus = false;  // Track if last Firebase send was success
 
 void setup() {
   Serial.begin(115200);
-  delay(500);
+  delay(1000);  // Give more time for initialization
   
   // Connect to WiFi
   setupWiFi();
   
   // Configure ADC for ESP32-S
-  analogSetWidth(12);  // Set ADC resolution to 12 bits
-  analogSetPinAttenuation(BATTERY_PIN, ADC_11db);  // Set attenuation for 0-3.3V range
-  analogSetPinAttenuation(AD8232_OUTPUT, ADC_11db);  // Set attenuation for ECG input
+  analogReadResolution(12);  // Set ADC resolution to 12 bits
+  analogSetAttenuation(ADC_11db);  // Set attenuation for 0-3.3V range
   
-  // Initialize pins
-  pinMode(AD8232_OUTPUT, INPUT);
-  pinMode(BATTERY_PIN, INPUT);
+  // Initialize pins with explicit modes
+  pinMode(AD8232_OUTPUT, INPUT);  // ECG analog input
+  pinMode(BATTERY_PIN, INPUT);    // Battery voltage input
   pinMode(LED_FETAL, OUTPUT);
   pinMode(LED_WORKING, OUTPUT);
   pinMode(LED_WIFI, OUTPUT);
-  pinMode(LO_PLUS, INPUT);
-  pinMode(LO_MINUS, INPUT);
+  pinMode(LO_PLUS, INPUT);    // Lead-off detection
+  pinMode(LO_MINUS, INPUT);   // Lead-off detection
   
-  // Initialize buffer
+  // Initialize buffer with midpoint value
   for (int i = 0; i < BUFFER_SIZE; i++) {
-    ecgBuffer[i] = 0;
+    ecgBuffer[i] = 2048;  // Mid-point of 12-bit ADC (0-4095)
   }
   
-  // Connect to WiFi
- 
+  // Initial battery reading
+  batteryVoltage = getBatteryVoltage();
   
   // Configure time
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
@@ -175,8 +174,8 @@ void loop() {
     reconnectWiFi();
   }
   
-  // Declare variables at the start of the function
-  int rawEcg = 0;
+  // Read sensors
+  int rawEcg = analogRead(AD8232_OUTPUT);
   float filteredEcg = 0;
   
   // Check for leads-off condition
@@ -184,27 +183,41 @@ void loop() {
   
   // If leads are connected, process ECG
   if (!leadsOff) {
-    // Read and filter ECG signal
-    rawEcg = analogRead(AD8232_OUTPUT);
-    filteredEcg = filterEcg(rawEcg);
-    
-    // Detect peaks and calculate BPM
-    detectPeaksAndCalculateBpm(filteredEcg);
+    // Ensure raw ECG is within valid range
+    if (rawEcg >= 0 && rawEcg <= 4095) {
+      filteredEcg = filterEcg(rawEcg);
+      
+      // Detect peaks and calculate BPM
+      detectPeaksAndCalculateBpm(filteredEcg);
+    } else {
+      rawEcg = 2048;  // Set to midpoint if reading is invalid
+    }
     
     // Send data to Firebase periodically
     if (millis() - lastDataSend >= SEND_INTERVAL) {
+      // Update battery voltage before sending
+      batteryVoltage = getBatteryVoltage();
+      
       sendToFirebase(rawEcg, filteredEcg);
       lastDataSend = millis();
     }
+  } else {
+    // If leads are off, set default values
+    rawEcg = 2048;
+    filteredEcg = 2048;
+    fetalBpm = 0;
   }
   
   // Check battery status
-  checkBatteryStatus();
+  if (millis() - lastBatteryCheck >= BATTERY_CHECK_INTERVAL) {
+    batteryVoltage = getBatteryVoltage();
+    lastBatteryCheck = millis();
+  }
   
   // Update LED states
   updateLeds();
   
-  // Display information periodically
+  // Display information
   displayInfo(rawEcg, filteredEcg);
   
   // Maintain consistent sampling rate
@@ -284,37 +297,53 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
   char timestamp[30];
   strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", &timeinfo);
 
-  // Construct JSON
-  String json = "{";
-  json += "\"deviceId\":\"esp32\",";
-  json += "\"bpm\":" + String(fetalBpm) + ",";
-  json += "\"timestamp\":\"" + String(timestamp) + "\",";
-  json += "\"rawEcg\":" + String(rawEcg) + ",";
-  json += "\"smoothedEcg\":" + String(smoothedEcg);
-  json += "}";
+  // Create JSON using ArduinoJson
+  StaticJsonDocument<200> doc;
+  doc["deviceId"] = "esp32";
+  doc["bpm"] = fetalBpm;
+  doc["timestamp"] = timestamp;
+  doc["rawEcg"] = rawEcg;
+  doc["smoothedEcg"] = smoothedEcg;
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+
+  // Print JSON for debugging
+  Serial.println("Sending JSON:");
+  Serial.println(jsonString);
 
   // Send to Firebase
   HTTPClient http;
-  http.begin(FIREBASE_URL + "?auth=" + FIREBASE_AUTH);
+  
+  // Set the full URL with auth token
+  String url = FIREBASE_URL + "?auth=" + FIREBASE_AUTH;
+  http.begin(url);
+  
+  // Set headers
   http.addHeader("Content-Type", "application/json");
-
-  int httpResponseCode = http.PUT(json);
+  http.addHeader("Accept", "application/json");
+  
+  // Send POST request instead of PUT for better compatibility
+  int httpResponseCode = http.POST(jsonString);
 
   if (httpResponseCode > 0) {
     String response = http.getString();
-    Serial.println("✅ Data sent to Firebase");
     if (httpResponseCode == 200) {
+      Serial.println("✅ Data sent to Firebase successfully");
       Serial.println("Response: 200 (Success)");
+      Serial.println("Firebase Response: " + response);
       lastFirebaseSendStatus = true;
     } else {
-      Serial.print("Response: ");
+      Serial.print("⚠️ HTTP Response Code: ");
       Serial.println(httpResponseCode);
+      Serial.println("Response: " + response);
       lastFirebaseSendStatus = false;
     }
   } else {
     Serial.println("❌ Error sending data: Not Sent");
     Serial.print("Error code: ");
     Serial.println(httpResponseCode);
+    Serial.println("Error: " + http.errorToString(httpResponseCode));
     lastFirebaseSendStatus = false;
   }
 
