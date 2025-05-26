@@ -315,23 +315,21 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
   // Send to Firebase
   HTTPClient http;
   
-  // Set the full URL with auth token
+  // Construct the full URL with auth token
   String url = FIREBASE_URL + "?auth=" + FIREBASE_AUTH;
   http.begin(url);
   
   // Set headers
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("Accept", "application/json");
   
-  // Send POST request instead of PUT for better compatibility
-  int httpResponseCode = http.POST(jsonString);
+  // Send PUT request
+  int httpResponseCode = http.PUT(jsonString);
 
   if (httpResponseCode > 0) {
     String response = http.getString();
     if (httpResponseCode == 200) {
       Serial.println("✅ Data sent to Firebase successfully");
       Serial.println("Response: 200 (Success)");
-      Serial.println("Firebase Response: " + response);
       lastFirebaseSendStatus = true;
     } else {
       Serial.print("⚠️ HTTP Response Code: ");
@@ -343,7 +341,6 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
     Serial.println("❌ Error sending data: Not Sent");
     Serial.print("Error code: ");
     Serial.println(httpResponseCode);
-    Serial.println("Error: " + http.errorToString(httpResponseCode));
     lastFirebaseSendStatus = false;
   }
 
