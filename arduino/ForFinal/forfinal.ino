@@ -127,6 +127,7 @@ unsigned long lastBatteryCheck = 0;
 float batteryVoltage = 0.0;
 bool ledWorkingState = false;
 bool ledWifiState = false;
+bool lastFirebaseSendStatus = false;  // Track if last Firebase send was successful
 
 void setup() {
   Serial.begin(115200);
@@ -268,6 +269,7 @@ void reconnectWiFi() {
 void sendToFirebase(int rawEcg, float smoothedEcg) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("❌ WiFi not connected. Skipping data send.");
+    lastFirebaseSendStatus = false;
     return;
   }
 
@@ -275,6 +277,7 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo)) {
     Serial.println("❌ Failed to obtain time");
+    lastFirebaseSendStatus = false;
     return;
   }
   
@@ -300,9 +303,19 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
   if (httpResponseCode > 0) {
     String response = http.getString();
     Serial.println("✅ Data sent to Firebase");
+    if (httpResponseCode == 200) {
+      Serial.println("Response: 200 (Success)");
+      lastFirebaseSendStatus = true;
+    } else {
+      Serial.print("Response: ");
+      Serial.println(httpResponseCode);
+      lastFirebaseSendStatus = false;
+    }
   } else {
-    Serial.print("❌ Error sending data: ");
+    Serial.println("❌ Error sending data: Not Sent");
+    Serial.print("Error code: ");
     Serial.println(httpResponseCode);
+    lastFirebaseSendStatus = false;
   }
 
   http.end();
@@ -689,6 +702,8 @@ void displayInfo(int rawEcg, float filteredEcg) {
   Serial.print(batteryVoltage);
   Serial.print(",");
   Serial.print(fetalBpm);
+  Serial.print(",");
+  Serial.print(lastFirebaseSendStatus ? "1" : "0");  // Add Firebase status to the plot (1 = sent, 0 = not sent)
   Serial.println();
   
   // Print detailed information every second
@@ -722,6 +737,9 @@ void displayInfo(int rawEcg, float filteredEcg) {
     
     Serial.print("WiFi Status: ");
     Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+
+    Serial.print("Firebase Status: ");
+    Serial.println(lastFirebaseSendStatus ? "Data Sent ✅" : "Not Sent ❌");
     
     Serial.println("-------------------");
   }
