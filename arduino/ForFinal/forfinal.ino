@@ -194,12 +194,15 @@ void loop() {
     }
     
     // Send data to Firebase periodically
-    if (millis() - lastDataSend >= SEND_INTERVAL) {
+    static unsigned long lastFirebaseAttempt = 0;
+    if (millis() - lastFirebaseAttempt >= SEND_INTERVAL) {
+      Serial.println("\nAttempting to send data to Firebase...");
       // Update battery voltage before sending
       batteryVoltage = getBatteryVoltage();
       
+      // Try to send data
       sendToFirebase(rawEcg, filteredEcg);
-      lastDataSend = millis();
+      lastFirebaseAttempt = millis();
     }
   } else {
     // If leads are off, set default values
@@ -281,12 +284,19 @@ void reconnectWiFi() {
 
 void sendToFirebase(int rawEcg, float smoothedEcg) {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("❌ WiFi not connected. Skipping data send.");
-    Serial.print("WiFi Status: ");
-    Serial.println(WiFi.status());
-    lastFirebaseSendStatus = false;
-    return;
+    Serial.println("❌ WiFi not connected. Attempting reconnection...");
+    reconnectWiFi();
+    if (WiFi.status() != WL_CONNECTED) {
+      lastFirebaseSendStatus = false;
+      return;
+    }
   }
+
+  Serial.println("\n--- Firebase Send Attempt ---");
+  Serial.print("WiFi Status: ");
+  Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 
   // Get current timestamp
   struct tm timeinfo;
@@ -310,33 +320,28 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
   String jsonString;
   serializeJson(doc, jsonString);
 
-  // Print JSON for debugging
-  Serial.println("\n--- Firebase Debug Info ---");
-  Serial.println("Sending JSON:");
+  Serial.println("Prepared JSON:");
   Serial.println(jsonString);
 
   // Send to Firebase
   HTTPClient http;
   
-  // Construct the full URL with auth token
   String url = FIREBASE_URL + "?auth=" + FIREBASE_AUTH;
-  Serial.print("URL: ");
+  Serial.print("Sending to URL: ");
   Serial.println(url);
   
   http.begin(url);
-  
-  // Set headers
   http.addHeader("Content-Type", "application/json");
   
-  // Send PUT request
   Serial.println("Sending PUT request...");
   int httpResponseCode = http.PUT(jsonString);
-  Serial.print("Response Code: ");
+
+  Serial.print("HTTP Response Code: ");
   Serial.println(httpResponseCode);
 
   if (httpResponseCode > 0) {
     String response = http.getString();
-    Serial.print("Response Body: ");
+    Serial.print("Response: ");
     Serial.println(response);
     
     if (httpResponseCode == 200) {
@@ -345,18 +350,18 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
     } else {
       Serial.print("⚠️ HTTP Response Code: ");
       Serial.println(httpResponseCode);
-      Serial.println("Response: " + response);
       lastFirebaseSendStatus = false;
     }
   } else {
     Serial.print("❌ Error sending data. Error code: ");
     Serial.println(httpResponseCode);
-    Serial.println("Error message: " + http.errorToString(httpResponseCode));
+    Serial.print("Error message: ");
+    Serial.println(http.errorToString(httpResponseCode));
     lastFirebaseSendStatus = false;
   }
 
   http.end();
-  Serial.println("------------------------\n");
+  Serial.println("------------------------");
 }
 
 void testLEDs() {
