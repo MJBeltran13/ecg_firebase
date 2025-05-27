@@ -282,6 +282,8 @@ void reconnectWiFi() {
 void sendToFirebase(int rawEcg, float smoothedEcg) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("❌ WiFi not connected. Skipping data send.");
+    Serial.print("WiFi Status: ");
+    Serial.println(WiFi.status());
     lastFirebaseSendStatus = false;
     return;
   }
@@ -309,6 +311,7 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
   serializeJson(doc, jsonString);
 
   // Print JSON for debugging
+  Serial.println("\n--- Firebase Debug Info ---");
   Serial.println("Sending JSON:");
   Serial.println(jsonString);
 
@@ -317,19 +320,27 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
   
   // Construct the full URL with auth token
   String url = FIREBASE_URL + "?auth=" + FIREBASE_AUTH;
+  Serial.print("URL: ");
+  Serial.println(url);
+  
   http.begin(url);
   
   // Set headers
   http.addHeader("Content-Type", "application/json");
   
   // Send PUT request
+  Serial.println("Sending PUT request...");
   int httpResponseCode = http.PUT(jsonString);
+  Serial.print("Response Code: ");
+  Serial.println(httpResponseCode);
 
   if (httpResponseCode > 0) {
     String response = http.getString();
+    Serial.print("Response Body: ");
+    Serial.println(response);
+    
     if (httpResponseCode == 200) {
       Serial.println("✅ Data sent to Firebase successfully");
-      Serial.println("Response: 200 (Success)");
       lastFirebaseSendStatus = true;
     } else {
       Serial.print("⚠️ HTTP Response Code: ");
@@ -338,13 +349,14 @@ void sendToFirebase(int rawEcg, float smoothedEcg) {
       lastFirebaseSendStatus = false;
     }
   } else {
-    Serial.println("❌ Error sending data: Not Sent");
-    Serial.print("Error code: ");
+    Serial.print("❌ Error sending data. Error code: ");
     Serial.println(httpResponseCode);
+    Serial.println("Error message: " + http.errorToString(httpResponseCode));
     lastFirebaseSendStatus = false;
   }
 
   http.end();
+  Serial.println("------------------------\n");
 }
 
 void testLEDs() {
