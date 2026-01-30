@@ -1,0 +1,28 @@
+# Node modules
+node_modules/
+
+# Build outputs
+.expo/
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test APK
+test.apk
+
+# Local env files
+.env*.local

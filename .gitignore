@@ -110,7 +110,6 @@ android/build/
 ios/build/
 
 # EAS
-eas.json
 .eas/
 
 # Misc
